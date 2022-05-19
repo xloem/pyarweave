@@ -1,20 +1,25 @@
-# arweave-python-client
-This client allows you to integrate your python apps with the Arweave network allowing you to got wallet operations and transactions
+# PyArweave
+This is a small python client for arweave, based on https://github.com/MikeHibbert/arweave-python-client .
+
+I can struggle to code, so the hope is to keep this small and simple and ask the universe for more developers to take over maintainership.
+
+Meanwhile, here's an arweave library.
 
 ## Installing
-To use the library simply install it:
-```buildoutcfg
-pip install arweave-python-client
 ```
+pip install ar
+```
+
+# possibly-outdated documentation
 
 ## Using your wallet
 Once installed you can import it and supply the wallet object with the path to your wallet JSON file:
-```buildoutcfg
-import arweave
+```
+import ar
 
 
 wallet_file_path = "/some/folder/on/your/system"
-wallet = arweave.Wallet(wallet_file_path)
+wallet = ar.Wallet(wallet_file_path)
 
 balance =  wallet.balance
 
@@ -23,25 +28,25 @@ last_transaction = wallet.get_last_transaction_id()
 
 ## Loading your wallet
 If your wallet data is stored in a secret manager or anywhere other than a file, you can load it with the `from_data` classmethod:
-```buildoutcfg
-import arweave
+```
+import ar
 
 wallet_data = // Load from cloud storage or wherever
-wallet = arweave.Wallet.from_data(wallet_data)
+wallet = ar.Wallet.from_data(wallet_data)
 
 balance =  wallet.balance
 ```
 
 ## Transactions
 To send a transaction you will need to open your wallet, create a transaction object, sign the transaction and then finally post the transaction:
-```buildoutcfg
-import arweave
+```
+import ar
 
 
 wallet_file_path = "/some/folder/on/your/system"
-wallet = arweave.Wallet(wallet_file_path)
+wallet = ar.Wallet(wallet_file_path)
 
-transaction = arweave.Transaction(wallet, quantity=0.3, to='<some wallet address')
+transaction = ar.Transaction(wallet, quantity=0.3, to='<some wallet address')
 transaction.sign()
 transaction.send()
 ```
@@ -50,9 +55,9 @@ transaction.send()
 
 ## Uploading large files
 Uploading large data files is now possible! you can now upload data larger than your physical memory or maximum transaction size (12MB) in the following way
-```buildoutcfg
-from arweave.arweave_lib import Wallet, Transaction
-from arweave.transaction_uploader import get_uploader
+```
+from ar.arweave_lib import Wallet, Transaction
+from ar.transaction_uploader import get_uploader
 
 wallet = Wallet(jwk_file)
 
@@ -73,19 +78,19 @@ with open("my_mahoosive_file.dat", "rb", buffering=0) as file_handler:
 NOTE: When uploading you only need to supply a file handle with buffering=0 instead of reading in the data all at once. The data will be read progressively in small chunks
 
 To check the status of a transaction after sending:
-```buildoutcfg
+```
 status = transaction.get_status()
 ```
 
 To check the status much later you can store the ```transaction.id``` and reload it:
-```buildoutcfg
+```
 transaction = Transaction(wallet, id='some id you stored')
 status = transaction.get_status()
 ```
 
 ## Storing data
 As you know Arweave allows you to permanently store data on the network and you can do this by supplying data to the transaction as a string object:
-```buildoutcfg
+```
 wallet = Wallet(jwk_file)
 
 with open('myfile.pdf', 'r') as mypdf:
@@ -125,11 +130,11 @@ transaction.api_url = 'some specific node ip/address and port'
 
 ## Arql
 You can now perform searches using the arql method:
-```buildoutcfg
-from arweave.arweave_lib import arql
+```
+from ar.arweave_lib import arql
 
 wallet_file_path = "/some/folder/on/your/system"
-wallet = arweave.Wallet(wallet_file_path)
+wallet = ar.Wallet(wallet_file_path)
 
 transaction_ids = arql(
     wallet,
@@ -141,11 +146,11 @@ transaction_ids = arql(
 ```
 
 Alternatively, you can use a the helper method arql_with_transaction_data() to get all transaction ids as well as all the data stored in the blockchain
-```buildoutcfg
-import arweave
+```
+import ar
 
 wallet_file_path = "/some/folder/on/your/system"
-wallet = arweave.Wallet(wallet_file_path)
+wallet = ar.Wallet(wallet_file_path)
 
 transactions = aweave.arql_with_transaction_data(
     wallet,

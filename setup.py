@@ -1,21 +1,18 @@
 from distutils.core import setup
 
 setup(
-  name="arweave-python-client",
-  packages = ['arweave'], # this must be the same as the name above
-  version="1.0.15.dev0",
-  description="Client interface for sending transactions on the Arweave permaweb",
-  author="Mike Hibbert",
-  author_email="mike@hibbertitsolutions.co.uk",
-  url="https://github.com/MikeHibbert/arweave-python-client",
-  download_url="https://github.com/MikeHibbert/arweave-python-client",
+  name="PyArweave",
+  packages = ['ar'],
+  version="0.1.0",
+  description="Tiny Arweave Library",
+  url="https://github.com/xloem/pyar",
   keywords=['arweave', 'crypto'],
   classifiers=[
     "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: GNU General Public License v2 or later (GPLv2+)",
     "Operating System :: OS Independent",
   ],
-  install_requires=[
+  install_requires=[ # try to reduce these
     'arrow',
     'python-jose',
     'pynacl',
