@@ -1,4 +1,4 @@
-import requests
+import json, requests
 
 from . import DEFAULT_API_URL, logger, ArweaveTransactionException
 
@@ -118,7 +118,7 @@ class Peer(object):
           "offset": "<a number from [start_offset, start_offset + chunk size), relative to other chunks>"
         }
         """
-        response = self._post("{}/chunk")
+        response = self._post(json_data, "{}/chunk")
 
     def tx_data(self, txid):
         """Get Transaction Data"""
