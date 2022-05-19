@@ -21,4 +21,6 @@ logger = logging.getLogger(__name__)
 class ArweaveTransactionException(Exception):
     pass
 
-from .arweave_lib import Peer, Wallet, Transaction, arql
+from .peer import Peer
+from .transaction import Transaction
+from .arweave_lib import Wallet, arql
