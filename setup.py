@@ -19,7 +19,7 @@ setup(
   packages = ['ar'],
   version="0.1.0",
   description="Tiny Arweave Library",
-  url="https://github.com/xloem/pyar",
+  url="https://github.com/xloem/pyarweave",
   keywords=['arweave', 'crypto'],
   classifiers=[
     "Programming Language :: Python :: 3",
