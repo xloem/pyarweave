@@ -50,17 +50,8 @@ def owner_to_address(owner):
     return result
 
 
-def winston_to_ar(winston_str: str) -> float:
-    length = len(winston_str)
-
-    if length > 12:
-        past_twelve = length - 12
-        winston_str = "{}.{}".format(winston_str[0:past_twelve], winston_str[-12:])
-    else:
-        lessthan_twelve = 12 - length
-        winston_str = "0.{}{}".format("0" * lessthan_twelve, winston_str)
-        
-    return float(winston_str)
+def winston_to_ar(winston) -> float:
+    return float(winston) / 1000000000000
 
   
 def ar_to_winston(ar_amount: str) -> str:

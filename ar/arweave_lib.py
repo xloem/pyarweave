@@ -164,7 +164,7 @@ class Transaction(object):
 
     def from_serialized_transaction(self, transaction_json):
         if type(transaction_json) == str:
-            self.load_json(transaction_json)
+            self.load(json.loads(transaction_json))
         else:
             raise ArweaveTransactionException(
                 "Please supply a string containing json to initialize a serialized transaction")
@@ -247,7 +247,7 @@ class Transaction(object):
 
     def send(self):
         try:
-            self.peer.send(self.json_data)
+            self.peer.send_tx(self.json_data)
         except ArweaveTransactionException:
             pass
 
@@ -302,7 +302,7 @@ class Transaction(object):
 
     def get_transaction(self):
         try:
-            self.load_json(self.peer.tx(self.id))
+            self.load(self.peer.tx(self.id))
         except ArweaveTransactionException as exception:
             pass
 
@@ -317,9 +317,7 @@ class Transaction(object):
         self.data = self.peer.data(self.id)
         return self.data
 
-    def load_json(self, json_str):
-        json_data = json.loads(json_str)
-
+    def load(self, json_data):
         self.data = json_data.get('data', '')
         self.last_tx = json_data.get('last_tx', '')
         self.owner = json_data.get('owner', '')
@@ -396,16 +394,7 @@ def arql(wallet, query):
     :return list of Transaction instances:
     """
 
-    data = json.dumps(query)
-    headers = {'Content-type': 'application/json', 'Accept': 'text/plain'}
-    response = requests.post("{}/arql".format(DEFAULT_API_URL), data=data, headers=headers)
-
-    if response.status_code == 200:
-        transaction_ids = json.loads(response.text)
-
-        return transaction_ids
-
-    return None
+    return Peer(DEFAULT_API_URL).arql(query)
 
 
 def arql_with_transaction_data(wallet, query):
