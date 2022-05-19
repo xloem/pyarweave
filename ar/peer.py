@@ -101,7 +101,7 @@ class Peer(object):
             }
         }
         """
-        response = self._post(expr, "{}/arql")
+        response = self._post(logical_expression, "{}/arql")
         return json.loads(response.text)
 
     def tx_data_html(self, txid):
@@ -485,11 +485,11 @@ class Peer(object):
         request = requests.Request(**{"method": "POST", "url": url, "data": data, "headers": headers, **request_kwparams})
         response = self.session.send(request.prepare())
 
-        logger.debug("{}\n\n{}".format(response.text, self.json_data))
+        logger.debug("{}\n\n{}".format(response.text, data))
 
         if response.status_code == 200:
             logger.debug("RESPONSE 200: {}".format(response.text))
             return response
         else:
-            logger.error("{}\n\n{}".format(response.text, json_data))
-            raise ArweaveTransactionException(response.text, json_data)
+            logger.error("{}\n\n{}".format(response.text, data))
+            raise ArweaveTransactionException(response.text, data)
