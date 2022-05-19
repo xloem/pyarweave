@@ -1,3 +1,4 @@
+# note: the setup dependency and .cfg could be removed by moving things into here
 release: ensure-git pypi_upload
 
 help:

@@ -12,4 +12,13 @@
 # You should have received a copy of the GNU General Public License along with
 # PyArweave. If not, see <https://www.gnu.org/licenses/>.
 
-from .arweave_lib import Wallet, Transaction, arql
+import logging
+
+DEFAULT_API_URL = "https://arweave.net"
+
+logger = logging.getLogger(__name__)
+
+class ArweaveTransactionException(Exception):
+    pass
+
+from .arweave_lib import Peer, Wallet, Transaction, arql
