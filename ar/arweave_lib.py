@@ -36,8 +36,8 @@ from .utils import (
     decode_tag,
     base64url_decode
 )
-from .deep_hash import deep_hash
-from .merkle import compute_root_hash, generate_transaction_chunks
+from .utils.deep_hash import deep_hash
+from .utils.merkle import compute_root_hash, generate_transaction_chunks
 
 logger = logging.getLogger(__name__)
 

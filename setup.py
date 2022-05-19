@@ -12,12 +12,11 @@
 # You should have received a copy of the GNU General Public License along with
 # PyArweave. If not, see <https://www.gnu.org/licenses/>.
 
-from setuptools import setup
+from setuptools import setup, find_packages
 
 setup(
   name="PyArweave",
-  packages = ['ar'],
-  version="0.0.2",
+  version="0.0.3",
   description="Tiny Arweave Library",
   long_description=open('README.md').read(),
   long_description_content_type='text/markdown',
@@ -28,6 +27,7 @@ setup(
     "License :: OSI Approved :: GNU General Public License v2 or later (GPLv2+)",
     "Operating System :: OS Independent",
   ],
+  packages = find_packages(),
   install_requires=[ # try to reduce these
     'arrow',
     'python-jose',

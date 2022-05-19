@@ -17,7 +17,7 @@ import struct
 import functools
 from jose.utils import base64url_encode, base64url_decode
 from .file_io import read_file_chunks
-from .utils import concat_buffers
+from . import concat_buffers
 from json import JSONEncoder
 
 CHUNK_SIZE = 256 * 1024
