@@ -17,7 +17,7 @@ from distutils.core import setup
 setup(
   name="PyArweave",
   packages = ['ar'],
-  version="0.1.0",
+  version="0.0.1",
   description="Tiny Arweave Library",
   url="https://github.com/xloem/pyarweave",
   keywords=['arweave', 'crypto'],
