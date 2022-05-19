@@ -12,11 +12,11 @@
 # You should have received a copy of the GNU General Public License along with
 # PyArweave. If not, see <https://www.gnu.org/licenses/>.
 
-from arweave import Wallet
-import arweave
+from ar import Wallet
+import ar
 import json
 import responses
-from arweave.utils import winston_to_ar
+from ar.utils import winston_to_ar
 import pytest
 
 wallet = Wallet("test_jwk_file.json")
@@ -34,7 +34,7 @@ def test_get_balance():
     # execute test against mocked response
     balance = wallet.balance
     assert balance == winston_to_ar(mock_balance)
-    with pytest.raises(arweave.arweave_lib.ArweaveTransactionException):
+    with pytest.raises(ar.arweave_lib.ArweaveTransactionException):
         balance = wallet.balance
 
 

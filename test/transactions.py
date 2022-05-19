@@ -16,8 +16,8 @@ import os
 import logging
 import sys
 import tempfile
-from arweave.arweave_lib import Wallet, Transaction, arql, arql_with_transaction_data
-from arweave.transaction_uploader import get_uploader, from_transaction_id
+from ar.arweave_lib import Wallet, Transaction, arql, arql_with_transaction_data
+from ar.transaction_uploader import get_uploader, from_transaction_id
 
 logger = logging.getLogger(__name__)
 

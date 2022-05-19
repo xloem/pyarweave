@@ -12,7 +12,7 @@
 # You should have received a copy of the GNU General Public License along with
 # PyArweave. If not, see <https://www.gnu.org/licenses/>.
 
-from arweave.utils import winston_to_ar, ar_to_winston
+from ar.utils import winston_to_ar, ar_to_winston
 
 
 def test_winston_to_ar():
