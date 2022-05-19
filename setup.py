@@ -19,6 +19,8 @@ setup(
   packages = ['ar'],
   version="0.0.1",
   description="Tiny Arweave Library",
+  long_description=open('README.md').read(),
+  long_description_content_type='text/markdown',
   url="https://github.com/xloem/pyarweave",
   keywords=['arweave', 'crypto'],
   classifiers=[
