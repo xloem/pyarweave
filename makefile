@@ -1,5 +1,5 @@
 # note: the setup dependency and .cfg could be removed by moving things into here
-release: ensure-git pypi_upload
+pypi_upload: ensure-git
 
 help:
 	@echo 'Target name is simply passed to setup.py . make build, make install, make bdist_wheel ...'
