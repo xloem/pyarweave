@@ -7,7 +7,7 @@ Meanwhile, here's an arweave library.
 
 ## Installing
 ```
-pip install ar
+pip install pyarweave
 ```
 
 # possibly-outdated documentation
