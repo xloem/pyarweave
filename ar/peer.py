@@ -482,7 +482,10 @@ class Peer(object):
 
         headers = {'Content-Type': 'application/json', 'Accept': 'text/plain'}
 
-        request = requests.Request(**{"method": "POST", "url": url, "data": data, "headers": headers, **request_kwparams})
+        if type(data) is dict:
+            request = requests.Request(**{"method": "POST", "url": url, "json": data, "headers": headers, **request_kwparams})
+        else:
+            request = requests.Request(**{"method": "POST", "url": url, "data": data, "headers": headers, **request_kwparams})
         response = self.session.send(request.prepare())
 
         logger.debug("{}\n\n{}".format(response.text, data))
