@@ -59,11 +59,11 @@ class TransactionUploader:
 
     @property
     def is_complete(self):
-        return self.tx_posted and self.chunk_index == len(self.transaction.chunks.get("chunks"))
+        return self.tx_posted and self.chunk_index == len(self.transaction.chunks.get('chunks'))
 
     @property
     def total_chunks(self):
-        return len(self.transaction.chunks.get("chunks"))
+        return len(self.transaction.chunks.get('chunks'))
 
     @property
     def uploaded_chunks(self):
@@ -71,16 +71,16 @@ class TransactionUploader:
 
     @property
     def pct_complete(self):
-        return int("{}".format(self.uploaded_chunks / self.total_chunks * 100).split('.')[0])
+        return int('{}'.format(self.uploaded_chunks / self.total_chunks * 100).split('.')[0])
 
     def to_json(self):
         data = {
-            "chunkIndex": self.chunk_index,
-            "transaction": self.transaction.to_dict(),
-            "lastRequestTimeEnd": self.last_request_time_end,
-            "lastResponseStatus": self.last_response_status,
-            "lastResponseError": self.last_response_error,
-            "lastResponseError": self.tx_posted
+            'chunkIndex': self.chunk_index,
+            'transaction': self.transaction.to_dict(),
+            'lastRequestTimeEnd': self.last_request_time_end,
+            'lastResponseStatus': self.last_response_status,
+            'lastResponseError': self.last_response_error,
+            'lastResponseError': self.tx_posted
         }
 
         return json.dumps(data)
@@ -98,7 +98,7 @@ class TransactionUploader:
 
     def upload_chunk(self):
         if self.is_complete:
-            raise TransactionUploaderException("Upload is already complete")
+            raise TransactionUploaderException('Upload is already complete')
 
         if self.last_response_error != '':
             self.total_errors += 1
@@ -107,7 +107,7 @@ class TransactionUploader:
 
         if self.total_errors == 100:
             raise TransactionUploaderException(
-                "Unable to complete upload: {}: {}".format(self.last_response_status, self.last_response_error)
+                'Unable to complete upload: {}: {}'.format(self.last_response_status, self.last_response_error)
             )
 
         delay = 0
@@ -141,26 +141,26 @@ class TransactionUploader:
         )
 
         if not chunk_ok:
-            raise TransactionUploaderException("Unable to validate chunk {}".format(self.chunk_index))
+            raise TransactionUploaderException('Unable to validate chunk {}'.format(self.chunk_index))
 
         self.data = chunk['chunk']  # = self.get_chunk_data(self.chunk_index)
         chunk['data_path'] = chunk['data_path'].decode()
         chunk['chunk'] = chunk['chunk'].decode()
 
-        url = "{}/chunk".format(self.transaction.api_url)
+        url = '{}/chunk'.format(self.transaction.api_url)
 
         headers = {'Content-Type': 'application/json', 'Accept': 'text/plain'}
 
         response = requests.post(url, data=json.dumps(chunk), headers=headers)
 
-        # logger.error("{}\n\n{}".format(response.text, self.transaction.json_data))
+        # logger.error('{}\n\n{}'.format(response.text, self.transaction.json_data))
 
         if response.status_code == 200:
-            logger.debug("RESPONSE 200: {}".format(response.text))
+            logger.debug('RESPONSE 200: {}'.format(response.text))
         else:
-            logger.error("{}".format(response.text))
+            logger.error('{}'.format(response.text))
 
-            return {"status": -1, "data": {"error": response.text}}
+            return {'status': -1, 'data': {'error': response.text}}
 
         self.last_request_time_end = arrow.now().timestamp
         self.last_response_status = response.status_code
@@ -172,7 +172,7 @@ class TransactionUploader:
 
             if self.last_response_error.error in FATAL_CHUNK_UPLOAD_ERRORS:
                 raise TransactionUploaderException(
-                    "Fatal error uploading chunk {}: {}".format(self.chunk_index, self.last_response_error.error)
+                    'Fatal error uploading chunk {}: {}'.format(self.chunk_index, self.last_response_error.error)
                 )
 
     def get_chunk_data(self, chunk_index):
@@ -185,7 +185,7 @@ class TransactionUploader:
         upload_in_body = self.total_chunks <= MAX_CHUNKS_IN_BODY
 
         if upload_in_body:
-            url = "{}/tx".format(self.transaction.api_url)
+            url = '{}/tx'.format(self.transaction.api_url)
             headers = {'Content-Type': 'application/json', 'Accept': 'text/plain'}
 
             self.transaction.data = chunk['chunk']
@@ -198,20 +198,20 @@ class TransactionUploader:
             self.transaction.data = b''
 
             if 200 <= response.status_code < 300:
-                logger.debug("RESPONSE 200: {}".format(response.text))
+                logger.debug('RESPONSE 200: {}'.format(response.text))
                 self.tx_posted = True
                 self.chunk_index = MAX_CHUNKS_IN_BODY
                 return
             else:
-                logger.error("{}\n\n{}".format(response.text, self.transaction.json_data))
+                logger.error('{}\n\n{}'.format(response.text, self.transaction.json_data))
 
                 self.last_response_error = json.loads(response.text)
 
                 raise TransactionUploaderException(
-                    "Unable to upload transaction {}, {}".format(response.status_code, self.last_response_error)
+                    'Unable to upload transaction {}, {}'.format(response.status_code, self.last_response_error)
                 )
 
-        url = "{}/tx".format(self.transaction.api_url)
+        url = '{}/tx'.format(self.transaction.api_url)
         headers = {'Content-Type': 'application/json', 'Accept': 'text/plain'}
 
         self.transaction.data = b''
@@ -227,7 +227,7 @@ class TransactionUploader:
             self.last_response_error = json.loads(response.text)
 
             raise TransactionUploaderException(
-                "Unable to upload transaction {}, {}".format(response.status_code, self.last_response_error)
+                'Unable to upload transaction {}, {}'.format(response.status_code, self.last_response_error)
             )
 
         self.tx_posted = True
@@ -238,30 +238,30 @@ class TransactionDownloaderException(Exception):
 
 
 def get_transaction_offset(tx_id):
-    url = "{}/tx/{}/offset".format(API_URL, tx_id)
+    url = '{}/tx/{}/offset'.format(API_URL, tx_id)
 
     response = requests.get(url)
     response_json = json.loads(response.text)
 
     if response.status_code == 200:
-        return int(response_json.get("data"))
+        return int(response_json.get('data'))
     else:
         raise TransactionDownloaderException(
-            "Unable to get transaction offset: {}".format(response_json.get("error"))
+            'Unable to get transaction offset: {}'.format(response_json.get('error'))
         )
 
 
 def get_chunk(offset):
-    url = "{}/chunk/{}".format(API_URL, offset)
+    url = '{}/chunk/{}'.format(API_URL, offset)
 
     response = requests.get(url)
     response_json = json.loads(response.text)
 
     if response.status_code == 200:
-        return response_json.get("data")
+        return response_json.get('data')
     else:
         raise TransactionDownloaderException(
-            "Unable to get chunk: {}".format(response_json.get("error"))
+            'Unable to get chunk: {}'.format(response_json.get('error'))
         )
 
 
@@ -299,12 +299,12 @@ def download_chunked_data(tx_id, file_handler=None):
 
 def from_serialized(self, file_handler, json_str):
     if json_str is None:
-        raise TransactionUploaderException("Serialized object does not match expected format")
+        raise TransactionUploaderException('Serialized object does not match expected format')
 
     serialized = json.loads(json_str)
 
     if type(serialized.chunk_index) != int or type(serialized.transaction) != object:
-        raise TransactionUploaderException("Serialized object does not match expected format")
+        raise TransactionUploaderException('Serialized object does not match expected format')
 
     upload = TransactionUploader(
         file_handler=file_handler,
@@ -318,18 +318,18 @@ def from_serialized(self, file_handler, json_str):
 def from_transaction_id(file_handler, transaction_str, wallet, api_url=API_URL):
     tx = json.loads(transaction_str)
 
-    url = "{}/tx/{}".format(api_url, tx.get('id'))
+    url = '{}/tx/{}'.format(api_url, tx.get('id'))
 
     headers = {'Content-Type': 'application/json', 'Accept': 'text/plain'}
 
     response = requests.get(url, headers=headers)
 
-    logger.error("{}".format(response.text))
+    logger.error('{}'.format(response.text))
 
     if response.status_code == 200:
-        logger.debug("RESPONSE 200: {}".format(response.text))
+        logger.debug('RESPONSE 200: {}'.format(response.text))
     else:
-        raise TransactionUploaderException("Tx {} not found: {} {}".format(
+        raise TransactionUploaderException('Tx {} not found: {} {}'.format(
             tx.get('id'),
             response.status_code,
             response.text)

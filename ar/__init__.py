@@ -14,7 +14,7 @@
 
 import logging
 
-DEFAULT_API_URL = "https://arweave.net"
+DEFAULT_API_URL = 'https://arweave.net'
 
 logger = logging.getLogger(__name__)
 

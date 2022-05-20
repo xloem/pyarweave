@@ -13,7 +13,7 @@
 # PyArweave. If not, see <https://www.gnu.org/licenses/>.
 
 def read_file_chunks(file_handler, chunk_size, seek_to=0):
-    """A generator function to read files one chunk at a time"""
+    '''A generator function to read files one chunk at a time'''
     while True:
         data = file_handler.read(chunk_size)
 

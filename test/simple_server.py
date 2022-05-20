@@ -23,14 +23,14 @@ app = Flask(__name__)
 
 @app.route('/tx', methods=['POST'])
 def index():
-    return "OK"
+    return 'OK'
 
 
 @app.route('/chunk', methods=['POST'])
 def chunk():
-    if request.method == "POST":
+    if request.method == 'POST':
         logger.error(json.dumps(str(request.data)))
-    return "OK"
+    return 'OK'
 
 
 if __name__ == '__main__':

@@ -43,9 +43,9 @@ class BranchNode(Node):
     def __init__(self, *args, **kwargs):
         super(BranchNode, self).__init__(id=kwargs['id'], max_byte_range=kwargs['max_byte_range'],
                                          byte_range=kwargs['byte_range'])
-        self.type = "branch"
-        self.left_child = kwargs.get("left_child", None)
-        self.right_child = kwargs.get("right_child", None)
+        self.type = 'branch'
+        self.left_child = kwargs.get('left_child', None)
+        self.right_child = kwargs.get('right_child', None)
 
 
 class LeafNode(Node):
@@ -54,7 +54,7 @@ class LeafNode(Node):
         self.data_hash = kwargs['data_hash']
         self.min_byte_range = kwargs['min_byte_range']
         self.id = hash([hash(self.data_hash), hash(int_to_buffer(self.max_byte_range))])
-        self.type = "leaf"
+        self.type = 'leaf'
 
 
 class TaggedChunk:
@@ -71,11 +71,11 @@ class Chunk:
         self.max_byte_range = max_byte_range
 
     def to_dict(self):
-        print("boom!")
+        print('boom!')
         return {
-            "dataHash": base64url_encode(self.data_hash).decode(),
-            "maxByteRange": self.max_byte_range,
-            "minByteRange": self.min_byte_range
+            'dataHash': base64url_encode(self.data_hash).decode(),
+            'maxByteRange': self.max_byte_range,
+            'minByteRange': self.min_byte_range
         }
 
 
@@ -92,8 +92,8 @@ class Proof:
 
     def to_dict(self):
         return {
-            "offset": self.offset,
-            "proof": base64url_encode(self.proof).decode()
+            'offset': self.offset,
+            'proof': base64url_encode(self.proof).decode()
         }
 
 
@@ -106,13 +106,13 @@ class ValidatedPathResult:
 
 
 def chunk_data(file_handler):
-    """
+    '''
     Takes the input data and chunks it into (mostly) equal sized chunks.
     The last chunk will be a bit smaller as it contains the remainder
     from the chunking process.
     :param file_handler:
     :return: chunks
-    """
+    '''
     chunks = [];
     chadd = chunks.append
 
@@ -206,9 +206,9 @@ def generate_transaction_chunks(file_handler):
         proofs = proofs[:-1]
 
     return {
-        "data_root": root.id,
-        "chunks": chunks,
-        "proofs": proofs
+        'data_root': root.id,
+        'chunks': chunks,
+        'proofs': proofs
     }
 
 
@@ -240,13 +240,13 @@ def flatten_list(inputs):
 
 
 def resolve_branch_proofs(node, proof=b'', depth=0):
-    if node.type == "leaf":
+    if node.type == 'leaf':
         return Proof(
             node.max_byte_range - 1,
             concat_buffers([proof, node.data_hash, int_to_buffer(node.max_byte_range)])
         )
 
-    if node.type == "branch":
+    if node.type == 'branch':
         partial_proof = concat_buffers([
             proof,
             node.left_child.id,
@@ -259,7 +259,7 @@ def resolve_branch_proofs(node, proof=b'', depth=0):
             resolve_branch_proofs(node.right_child, partial_proof, depth + 1),
         ]
 
-    raise NodeTypeException("Unexpected node type")
+    raise NodeTypeException('Unexpected node type')
 
 
 def hash_branch(left, right=None):
@@ -302,7 +302,7 @@ def hash(data):
 
 
 def note_to_buffer(note):
-    buffer = b"\x00" * NOTE_SIZE
+    buffer = b'\x00' * NOTE_SIZE
     buffer = bytearray(buffer)
 
     for i in range(NOTE_SIZE - 1, 0, -1):
@@ -319,7 +319,7 @@ def note_to_buffer(note):
 
 
 def int_to_buffer(note):
-    buffer = b"\x00" * NOTE_SIZE
+    buffer = b'\x00' * NOTE_SIZE
     buffer = bytearray(buffer)
 
     for i in range(NOTE_SIZE - 1, 0, -1):
@@ -408,7 +408,7 @@ def validate_path(id, dest, left_bound, right_bound, path):
     return False
 
 
-def debug(proof, output=""):
+def debug(proof, output=''):
     if len(proof) < 1:
         return output
 
@@ -428,7 +428,7 @@ def debug(proof, output=""):
         hash(offset_buffer)
     ])
 
-    updated_output = "{}\n{},{},{} => {}".format(
+    updated_output = '{}\n{},{},{} => {}'.format(
         output,
         bytearray(left),
         bytearray(right),

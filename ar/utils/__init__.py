@@ -27,14 +27,14 @@ def create_tag(name, value, v2):
         b64name = base64url_encode(name.encode('ascii')).decode()
         b64value = base64url_encode(value.encode('ascii')).decode()
 
-    return {"name": b64name, "value": b64value}
+    return {'name': b64name, 'value': b64value}
 
 
 def encode_tag(tag):
     b64name = base64url_encode(tag['name'].encode('ascii')).decode()
     b64value = base64url_encode(tag['value'].encode('ascii')).decode()
 
-    return {"name": b64name, "value": b64value}
+    return {'name': b64name, 'value': b64value}
 
 
 def decode_tag(tag):

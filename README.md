@@ -18,7 +18,7 @@ Once installed you can import it and supply the wallet object with the path to y
 import ar
 
 
-wallet_file_path = "/some/folder/on/your/system"
+wallet_file_path = '/some/folder/on/your/system'
 wallet = ar.Wallet(wallet_file_path)
 
 balance =  wallet.balance
@@ -43,7 +43,7 @@ To send a transaction you will need to open your wallet, create a transaction ob
 import ar
 
 
-wallet_file_path = "/some/folder/on/your/system"
+wallet_file_path = '/some/folder/on/your/system'
 wallet = ar.Wallet(wallet_file_path)
 
 transaction = ar.Transaction(wallet, quantity=0.3, to='<some wallet address')
@@ -61,8 +61,8 @@ from ar.transaction_uploader import get_uploader
 
 wallet = Wallet(jwk_file)
 
-with open("my_mahoosive_file.dat", "rb", buffering=0) as file_handler:
-    tx = Transaction(wallet, file_handler=file_handler, file_path="/some/path/my_mahoosive_file.dat")
+with open('my_mahoosive_file.dat', 'rb', buffering=0) as file_handler:
+    tx = Transaction(wallet, file_handler=file_handler, file_path='/some/path/my_mahoosive_file.dat')
     tx.add_tag('Content-Type', 'application/dat')
     tx.sign()
 
@@ -71,7 +71,7 @@ with open("my_mahoosive_file.dat", "rb", buffering=0) as file_handler:
     while not uploader.is_complete:
         uploader.upload_chunk()
 
-        logger.info("{}% complete, {}/{}".format(
+        logger.info('{}% complete, {}/{}'.format(
             uploader.pct_complete, uploader.uploaded_chunks, uploader.total_chunks
         ))
 ```
@@ -112,7 +112,7 @@ In addition you may want to get the data attached to this transaction once you'v
 ```
 tx.get_data()
 print(tx.data)
-> "some data"
+> 'some data'
 ```
 
 ## Sending to a specific Node
@@ -133,15 +133,15 @@ You can now perform searches using the arql method:
 ```
 from ar.arweave_lib import arql
 
-wallet_file_path = "/some/folder/on/your/system"
+wallet_file_path = '/some/folder/on/your/system'
 wallet = ar.Wallet(wallet_file_path)
 
 transaction_ids = arql(
     wallet,
     {
-        "op": "equals",
-        "expr1": "from",
-        "expr2": "Some owner address"
+        'op': 'equals',
+        'expr1': 'from',
+        'expr2': 'Some owner address'
     })
 ```
 
@@ -149,14 +149,14 @@ Alternatively, you can use a the helper method arql_with_transaction_data() to g
 ```
 import ar
 
-wallet_file_path = "/some/folder/on/your/system"
+wallet_file_path = '/some/folder/on/your/system'
 wallet = ar.Wallet(wallet_file_path)
 
 transactions = aweave.arql_with_transaction_data(
     wallet,
     {
-        "op": "equals",
-        "expr1": "from",
-        "expr2": "Some owner address"
+        'op': 'equals',
+        'expr1': 'from',
+        'expr2': 'Some owner address'
     })
 ```

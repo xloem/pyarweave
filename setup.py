@@ -15,17 +15,17 @@
 from setuptools import setup, find_packages
 
 setup(
-  name="PyArweave",
-  version="0.1.3",
-  description="Tiny Arweave Library",
+  name='PyArweave',
+  version='0.1.3',
+  description='Tiny Arweave Library',
   long_description=open('README.md').read(),
   long_description_content_type='text/markdown',
-  url="https://github.com/xloem/pyarweave",
+  url='https://github.com/xloem/pyarweave',
   keywords=['arweave', 'crypto'],
   classifiers=[
-    "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: GNU General Public License v2 or later (GPLv2+)",
-    "Operating System :: OS Independent",
+    'Programming Language :: Python :: 3',
+    'License :: OSI Approved :: GNU General Public License v2 or later (GPLv2+)',
+    'Operating System :: OS Independent',
   ],
   packages = find_packages(),
   install_requires=[ # try to reduce these

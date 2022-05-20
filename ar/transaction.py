@@ -19,7 +19,7 @@ from . import logger
 class Transaction(object):
     def __init__(self, wallet, **kwargs):
         self.jwk_data = wallet.jwk_data
-        self.jwk = jwk.construct(self.jwk_data, algorithm="RS256")
+        self.jwk = jwk.construct(self.jwk_data, algorithm='RS256')
         self.wallet = wallet
 
         self.id = kwargs.get('id', '')
@@ -52,7 +52,7 @@ class Transaction(object):
         if kwargs.get('transaction'):
             self.from_serialized_transaction(kwargs.get('transaction'))
         else:
-            self.data_root = ""
+            self.data_root = ''
 
             self.data_tree = []
 
@@ -66,7 +66,7 @@ class Transaction(object):
             if float(self.quantity) > 0:
                 if self.target == '':
                     raise ArweaveException(
-                        "Unable to send {} AR without specifying a target address".format(self.quantity))
+                        'Unable to send {} AR without specifying a target address'.format(self.quantity))
 
                 # convert to winston
                 self.quantity = ar_to_winston(float(self.quantity))
@@ -89,7 +89,7 @@ class Transaction(object):
             self.load(json.loads(transaction_json))
         else:
             raise ArweaveException(
-                "Please supply a string containing json to initialize a serialized transaction")
+                'Please supply a string containing json to initialize a serialized transaction')
 
     def get_reward(self, data_size, target_address=None):
         reward = self.peer.price(data_size, target_address)
@@ -121,7 +121,7 @@ class Transaction(object):
     def get_signature_data(self):
         self.reward = self.get_reward(self.data_size, target_address=self.target if len(self.target) > 0 else None)
 
-        if int(self.data_size) > 0 and self.data_root == "" and not self.uses_uploader:
+        if int(self.data_size) > 0 and self.data_root == '' and not self.uses_uploader:
             if type(self.data) == str:
                 root_hash = compute_root_hash(io.BytesIO(base64url_decode(self.data.encode('utf-8'))))
 
@@ -131,11 +131,11 @@ class Transaction(object):
             self.data_root = base64url_encode(root_hash)
 
         if self.format == 1:
-            tag_str = ""
+            tag_str = ''
 
             for tag in self.tags:
                 name, value = decode_tag(tag)
-                tag_str += "{}{}".format(name.decode(), value.decode())
+                tag_str += '{}{}'.format(name.decode(), value.decode())
 
             owner = base64url_decode(self.jwk_data['n'].encode())
             target = base64url_decode(self.target)
@@ -153,7 +153,7 @@ class Transaction(object):
             tag_list = [[tag['name'].encode(), tag['value'].encode()] for tag in self.tags]
 
             signature_data_list = [
-                "2".encode(),
+                '2'.encode(),
                 base64url_decode(self.jwk_data['n'].encode()),
                 base64url_decode(self.target.encode()),
                 str(self.quantity).encode(),
@@ -199,7 +199,7 @@ class Transaction(object):
             if len(self.data_root) > 0:
                 data['data_root'] = self.data_root.decode()
             else:
-                data['data_root'] = ""
+                data['data_root'] = ''
             data['data_size'] = str(self.data_size)
             data['data_tree'] = []
 
@@ -219,7 +219,7 @@ class Transaction(object):
         try:
             self.status = self.peer.tx_status(self.id)
         except ArweaveException:
-            self.status = "PENDING"
+            self.status = 'PENDING'
         return self.status
 
     def get_transaction(self):
@@ -261,16 +261,16 @@ class Transaction(object):
 
         if not self.chunks:
             self.chunks = {
-                "chunks": [],
-                "data_root": b'',
-                "proof": []
+                'chunks': [],
+                'data_root': b'',
+                'proof': []
             }
 
             self.data_root = ''
 
     def get_chunk(self, idx):
         if self.chunks is None:
-            raise ArweaveException("Chunks have not been prepared")
+            raise ArweaveException('Chunks have not been prepared')
 
         proof = self.chunks.get('proofs')[idx]
         chunk = self.chunks.get('chunks')[idx]
@@ -280,9 +280,9 @@ class Transaction(object):
         chunk_data = self.file_handler.read(chunk.data_size)
 
         return {
-            "data_root": self.data_root.decode(),
-            "data_size": str(self.data_size),
-            "data_path": base64url_encode(proof.proof),
-            "offset": str(proof.offset),
-            "chunk": base64url_encode(chunk_data)
+            'data_root': self.data_root.decode(),
+            'data_size': str(self.data_size),
+            'data_path': base64url_encode(proof.proof),
+            'offset': str(proof.offset),
+            'chunk': base64url_encode(chunk_data)
         }

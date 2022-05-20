@@ -20,63 +20,63 @@ from . import DEFAULT_API_URL
 TRANSACTION_DATA_LIMIT_IN_BYTES = 2000000
 
 def arql(wallet, query):
-    """
+    '''
     Creat your query like so:
     query = {
-        "op": "and",
-          "expr1": {
-            "op": "equals",
-            "expr1": "from",
-            "expr2": "hnRI7JoN2vpv__w90o4MC_ybE9fse6SUemwQeY8hFxM"
+        'op': 'and',
+          'expr1': {
+            'op': 'equals',
+            'expr1': 'from',
+            'expr2': 'hnRI7JoN2vpv__w90o4MC_ybE9fse6SUemwQeY8hFxM'
           },
-          "expr2": {
-            "op": "or",
-            "expr1": {
-              "op": "equals",
-              "expr1": "type",
-              "expr2": "post"
+          'expr2': {
+            'op': 'or',
+            'expr1': {
+              'op': 'equals',
+              'expr1': 'type',
+              'expr2': 'post'
             },
-            "expr2": {
-              "op": "equals",
-              "expr1": "type",
-              "expr2": "comment"
+            'expr2': {
+              'op': 'equals',
+              'expr1': 'type',
+              'expr2': 'comment'
             }
           }
     :param wallet:
     :param query:
     :return list of Transaction instances:
-    """
+    '''
 
     return Peer(DEFAULT_API_URL).arql(query)
 
 
 def arql_with_transaction_data(wallet, query):
-    """
+    '''
     Creat your query like so:
     query = {
-        "op": "and",
-          "expr1": {
-            "op": "equals",
-            "expr1": "from",
-            "expr2": "hnRI7JoN2vpv__w90o4MC_ybE9fse6SUemwQeY8hFxM"
+        'op': 'and',
+          'expr1': {
+            'op': 'equals',
+            'expr1': 'from',
+            'expr2': 'hnRI7JoN2vpv__w90o4MC_ybE9fse6SUemwQeY8hFxM'
           },
-          "expr2": {
-            "op": "or",
-            "expr1": {
-              "op": "equals",
-              "expr1": "type",
-              "expr2": "post"
+          'expr2': {
+            'op': 'or',
+            'expr1': {
+              'op': 'equals',
+              'expr1': 'type',
+              'expr2': 'post'
             },
-            "expr2": {
-              "op": "equals",
-              "expr1": "type",
-              "expr2": "comment"
+            'expr2': {
+              'op': 'equals',
+              'expr1': 'type',
+              'expr2': 'comment'
             }
           }
     :param wallet:
     :param query:
     :return list of Transaction instances:
-    """
+    '''
 
     transaction_ids = arql(wallet, query)
     if transaction_ids:
