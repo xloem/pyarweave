@@ -11,8 +11,11 @@ class HTTPClient:
         self.session.mount('https://', requests.adapters.HTTPAdapter(max_retries=max_retries))
         self.timeout = timeout
 
-    def _get(self, format = '{}', *params, **request_kwparams):
-        url = format.format(self.api_url, *params)
+    def _get(self, *params, **request_kwparams):
+        if len(params) and params[-1][0] == '?':
+            url = self.api_url + '/' + '/'.join(params[:-1]) + params[1]
+        else:
+            url = self.api_url + '/' + '/'.join(params)
 
         response = self.session.request(**{'method': 'GET', 'url': url, 'timeout': self.timeout, **request_kwparams})
 
@@ -22,8 +25,11 @@ class HTTPClient:
             logger.error(response.text)
             raise ArweaveException(response.text)
 
-    def _post(self, data, format = '{}', *params, **request_kwparams):
-        url = format.format(self.api_url, *params)
+    def _post(self, data, *params, **request_kwparams):
+        if len(params) and param[-1][0] == '?':
+            url = api_url + '/' + '/'.join(params[:-1]) + params[1]
+        else:
+            url = api_url + '/' + '/'.join(params)
 
         headers = {'Content-Type': 'application/json', 'Accept': 'text/plain'}
 
@@ -32,14 +38,14 @@ class HTTPClient:
         else:
             response = self.session.request(**{'method': 'POST', 'url': url, 'data': data, 'headers': headers, 'timeout': self.timeout, **request_kwparams})
 
-        logger.debug('{}\n\n{}'.format(response.text, data))
+        # logger.debug('{}\n\n{}'.format(response.text, data))
 
         if response.status_code == 200:
-            logger.debug('RESPONSE 200: {}'.format(response.text))
+            # logger.debug('RESPONSE 200: {}'.format(response.text))
             return response
         else:
-            logger.error('{}\n\n{}'.format(response.text, data))
-            raise ArweaveException(response.text, data)
+            # logger.error('{}\n\n{}'.format(response.text, data))
+            raise ArweaveException(response.text, data, url)
 
 class Peer(HTTPClient):
     # peer api [incomplete]:
@@ -49,22 +55,22 @@ class Peer(HTTPClient):
 
     def info(self):
         '''Return network information from a given node.'''
-        response = self._get('{}/info')
+        response = self._get('info')
         return json.loads(response.text)
 
     def time(self):
         '''Return the current universal time in seconds.'''
-        response = self._get('{}/time')
+        response = self._get('time')
         return int(response.text)
 
     def tx_pending(self):
         '''Return all mempool transactions.'''
-        response = self._get('{}/tx/pending')
+        response = self._get('tx/pending')
         return json.loads(response.text)
 
     def queue(self):
         '''Return outgoing transaction priority queue.'''
-        response = self._get('{}/queue')
+        response = self._get('queue')
         return json.loads(response.text)
 
     def tx_status(self, hash):
@@ -77,27 +83,27 @@ class Peer(HTTPClient):
             "number_of_confirmations": "<NumberOfConfirmations>",
         }
         '''
-        response = self._get('{}/tx/{}/status', txid)
+        response = self._get('tx', txid, 'status')
         return json.loads(response.text)
 
     def tx(self, txid):
         '''Return a JSON-encoded transaction.'''
-        tx_response = self._get('{}/tx/{}', txid)
+        tx_response = self._get('tx', txid)
         return json.loads(tx_response.text)
 
     def tx2(self, txid):
         '''Return a binary-encoded transaction.'''
-        tx_response = self._get('{}/tx2/{}', txid)
+        tx_response = self._get('tx2', txid)
         return tx_response.content
 
     def unconfirmed_tx(self, txid):
         '''Return a possibly unconfirmed JSON-encoded transaction.'''
-        tx_response = self._get('{}/unconfirmed_tx/{}', txid)
+        tx_response = self._get('unconfirmed_tx', txid)
         return json.loads(tx_response.text)
 
     def unconfirmed_tx2(self, txid):
         '''Return a possibly unconfirmed binary-encoded transaction.'''
-        tx_response = self._get('{}/unconfirmed_tx2/{}', txid)
+        tx_response = self._get('unconfirmed_tx2', txid)
         return tx_response.content
 
     def arql(self, logical_expression):
@@ -135,7 +141,7 @@ class Peer(HTTPClient):
             }
         }
         '''
-        response = self._post(logical_expression, '{}/arql')
+        response = self._post(logical_expression, 'arql')
         return json.loads(response.text)
 
     def tx_data_html(self, txid):
@@ -143,26 +149,26 @@ class Peer(HTTPClient):
         Return the data field of the transaction specified via the transaction ID (hash)
         served as HTML.
         '''
-        response = self._get('{}/tx/{}/data.html')
+        response = self._get('tx', txid, 'data.html')
         return response.content
 
     def sync_buckets(self):
-        response = self._get('{}/sync_buckets')
+        response = self._get('sync_buckets')
         return response.content
 
     def data_sync_record(self, encoded_start = None, encoded_limit = None):
         if encoded_start is None and encoded_limit is None:
-            response = self._get('{}/data_sync_record')
+            response = self._get('data_sync_record')
         else:
-            response = self._get('{}/data_sync_record', encoded_start, encoded_limit)
+            response = self._get('data_sync_record', encoded_start, encoded_limit)
         return response.content
 
     def chunk(self, offset):
-        response = self._get('{}/chunk/{}', offset)
+        response = self._get('chunk', offset)
         return json.loads(response.text)
 
     def chunk2(self, offset):
-        response = self._get('{}/chunk2/{}', offset)
+        response = self._get('chunk2', offset)
         return response.content
 
     def tx_offset(self, hash):
@@ -174,7 +180,7 @@ class Peer(HTTPClient):
             "size": "<Size>"
         }
         '''
-        response = self._get('{}/tx/{}/offset', hash)
+        response = self._get('tx', hash, 'offset')
         return json.loads(response.text)
 
     def send_chunk(self, json_data):
@@ -190,7 +196,7 @@ class Peer(HTTPClient):
           "offset": "<a number from [start_offset, start_offset + chunk size), relative to other chunks>"
         }
         '''
-        response = self._post(json_data, '{}/chunk')
+        response = self._post(json_data, 'chunk')
         return json.loads(response.text)
 
     def block_announcement(self, block_announcement):
@@ -199,17 +205,17 @@ class Peer(HTTPClient):
         412: no previous block
         208: already processing the block
         '''
-        response = self._post(block_announcement, '{}/block_announcement')
+        response = self._post(block_announcement, 'block_announcement')
         return json.loads(response.text)
 
     def block(self, block):
         '''Accept a JSON-encoded block with Base64Url encoded fields.'''
-        response = self._put(block, '{}/block')
+        response = self._put(block, 'block')
         return response.text # OK
 
     def block2(self, block):
         '''Accept a binary-encoded block.'''
-        response = self._put(block, '{}/block2')
+        response = self._put(block, 'block2')
         return response.text # OK
 
     def wallet(self, secret):
@@ -223,17 +229,17 @@ class Peer(HTTPClient):
             "wallet_access_code": <WalletAccessCode>
         }
         '''
-        response = self._post(secret, '{}/wallet')
+        response = self._post(secret, 'wallet')
         return json.loads(response.text)
 
     def send_tx(self, json_data):
         '''Accept a new JSON-encoded transaction.'''
-        response = self._post(json_data, '{}/tx')
+        response = self._post(json_data, 'tx')
         return response.text # OK
 
     def send_tx2(self, binary_data):
         '''Accept a new binary-encoded transaction.'''
-        response = self._post(binary_data, '{}/tx2')
+        response = self._post(binary_data, 'tx2')
         return response.text # OK
 
     def unsigned_tx(self, secret):
@@ -243,20 +249,20 @@ class Peer(HTTPClient):
         Requires internal_api_secret startup option to be set.
         WARNING: only use it if you really really know what you are doing.
         '''
-        response = self._post(secret, '{}/unsigned_tx')
+        response = self._post(secret, 'unsigned_tx')
         return json.loads(response.text)
 
     def peers(self):
         '''Return the list of peers held by the node.'''
-        response = self._get('{}/peers')
+        response = self._get('peers')
         return json.loads(response.text)
 
     def price(self, data_size=0, target_address=None):
         '''Return the estimated transaction fee not including a new wallet fee.'''
         if target_address is not None:
-            response = self._get('{}/price/{}/{}', data_size, target_address)
+            response = self._get('price', data_size, target_address)
         else:
-            response = self._get('{}/price/{}', data_size)
+            response = self._get('price', data_size)
         return response.text
 
     def hash_list(self, from_height = None, to_height = None, as_hash_list = True):
@@ -268,9 +274,9 @@ class Peer(HTTPClient):
         if as_hash_list:
             kwparams['headers'] = {'x-block-format': '2'}
         if from_height is not None or to_height is not None:
-            response = self._get('{}/hash_list/{}/{}', from_height, to_height, **kwparams)
+            response = self._get('hash_list', from_height, to_height, **kwparams)
         else:
-            response = self._get('{}/hash_list', **kwparams)
+            response = self._get('hash_list', **kwparams)
         return json.loads(response.text)
 
     def block_index(self, from_height = None, to_height = None, as_hash_list = False):
@@ -279,18 +285,18 @@ class Peer(HTTPClient):
         if as_hash_list:
             kwparams['headers'] = {'x-block-format': '2'}
         if from_height is not None or to_height is not None:
-            response = self._get('{}/block_index/{}/{}', from_height, to_height, **kwparams)
+            response = self._get('block_index', from_height, to_height, **kwparams)
         else:
-            response = self._get('{}/block_index', **kwparams)
+            response = self._get('block_index', **kwparams)
         return json.loads(response.text)
     
     def block_index2(self):
         '''Return the current binary-encoded block index held by the node.'''
-        response = self._get('{}/block_index2')
+        response = self._get('block_index2')
         return response.content
 
     def recent_hash_list(self):
-        response = self._get('{}/recent_hash_list')
+        response = self._get('recent_hash_list')
         return json.loads(response.content)
 
     def recent_hash_list_diff(self, hash_list_binary):
@@ -300,7 +306,7 @@ class Peer(HTTPClient):
         Peers may use this endpoint to make sure they did not miss blocks or learn
         about the missed blocks and their transactions so that they can catch up quickly.
         '''
-        response = self._post(hash_list_binary, '{}/recent_hash_list_diff', method='GET')
+        response = self._post(hash_list_binary, 'recent_hash_list_diff', method='GET')
         return json.loads(response.text)
 
     def wallet_list(self, encoded_root_hash = None, encoded_cursor = None, wallet_list_chunk_size = None):
@@ -315,16 +321,16 @@ class Peer(HTTPClient):
         else:
             wallet_list_chunk_size = ''
         if encoded_cursor is not None:
-            response = self._get('{}/wallet_list/{}/{}{}', encoded_root_hash, encoded_cursor, wallet_list_chunk_size)
+            response = self._get('wallet_list', encoded_root_hash, encoded_cursor, wallet_list_chunk_size)
         if encoded_root_hash is not None:
-            response = self._get('{}/wallet_list/{}{}', encoded_root_hash, wallet_list_chunk_size)
+            response = self._get('wallet_list', encoded_root_hash, wallet_list_chunk_size)
         else:
-            response = self._get('{}/wallet_list')
+            response = self._get('wallet_list')
         return json.loads(response.text)
 
     def wallet_list_balance(self, encoded_root_hash, encoded_addr):
         '''Return the balance of the given address from the wallet tree with the given root hash.'''
-        response = self._get('{}/wallet_list/{}/{}/balance', encoded_root_hash, encoded_addr)
+        response = self._get('wallet_list', encoded_root_hash, encoded_addr, 'balance')
         return int(response.text)
 
     def send_peers(self):
@@ -332,12 +338,12 @@ class Peer(HTTPClient):
         Share your IP with another peer.
         Deprecated: To make a node learn your IP, you can make any request to it.
         '''
-        response = self._post(None, '{}/peers')
+        response = self._post(None, 'peers')
         return response.text # OK
 
     def wallet_balance(self, wallet_address):
         '''Return the balance of the wallet specified via wallet_address.'''
-        response = self._get('{}/wallet/{}/balance', wallet_address)
+        response = self._get('wallet', wallet_address, 'balance')
         return int(response.text)
 
     def wallet_last_tx(self, wallet_address):
@@ -345,12 +351,12 @@ class Peer(HTTPClient):
         Return the last transaction ID (hash) for the wallet specified via wallet_address.
         GET request to endpoint /wallet/{wallet_address}/last_tx.
         '''
-        response = self._get('{}/wallet/{}/last_tx', wallet_address)
+        response = self._get('wallet', wallet_address, 'last_tx')
         return response.text
 
     def tx_anchor(self):
         '''Return a block anchor to use for building transactions.'''
-        last_tx_response = self._get('{}/tx_anchor')
+        last_tx_response = self._get('tx_anchor')
         return last_tx_response.text
 
     def wallet_txs(self, wallet_address, earliest_tx = None):
@@ -359,9 +365,9 @@ class Peer(HTTPClient):
         for the wallet specified via wallet_address.
         '''
         if earlieset_tx is not None:
-            response = self._get('{}/wallet/{}/txs/{}', wallet_address, earliest_tx)
+            response = self._get('wallet', wallet_address, 'txs', earliest_tx)
         else:
-            response = self._get('{}/wallet/{}/txs', wallet_address)
+            response = self._get('wallet', wallet_address, 'txs')
         return json.loads(response.text)
 
     def wallet_deposits(self, wallet_address, earliest_deposit = None):
@@ -370,25 +376,25 @@ class Peer(HTTPClient):
         wallet_address, optionally starting from the earliest_deposit.
         '''
         if earliest_deposit is not None:
-            response = self._get('{}/wallet/{}/deposits/{}', wallet_address, earliest_deposit)
+            response = self._get('wallet', wallet_address, 'deposits', earliest_deposit)
         else:
-            response = self._get('{}/wallet/{}/deposits', wallet_address)
+            response = self._get('wallet', wallet_address, 'deposits')
         return json.loads(response.text)
 
     def block_hash(self, hash, field = None):
         '''Return the JSON-encoded block or field of a block with the given hash.'''
         if field is not None:
-            response = self._get('{}/block/hash/{}/{}', hash, field)
+            response = self._get('block/hash', hash, field)
         else:
-            response = self._get('{}/block/hash/{}', hash)
+            response = self._get('block/hash', hash)
         return json.loads(response.text)
 
     def block_height(self, height, field = None):
         '''Return the JSON-encoded block or field of a block with the given height.'''
         if field is not None:
-            response = self._get('{}/block/height/{}/{}', height, field)
+            response = self._get('block/height', height, field)
         else:
-            response = self._get('{}/block/height/{}', height)
+            response = self._get('block/height', height)
         return json.loads(response.text)
 
     def block2_hash(self, hash, encoded_transaction_indices = None):
@@ -403,9 +409,9 @@ class Peer(HTTPClient):
         the block cache - the motivation is to keep the endpoint lightweight.
         '''
         if encoded_transaction_indices is not None:
-            response = self._post(encoded_transaction_indices, '{}/block2/hash/{}', hash, method = 'GET')
+            response = self._post(encoded_transaction_indices, 'block2/hash', hash, method = 'GET')
         else:
-            response = self._get(encoded_transaction_indices, '{}/block2/hash/{}', hash)
+            response = self._get(encoded_transaction_indices, 'block2/hash', hash)
         return response.content
 
     def block2_height(self, height, encoded_transaction_indices = None):
@@ -420,19 +426,19 @@ class Peer(HTTPClient):
         the block cache - the motivation is to keep the endpoint lightweight.
         '''
         if encoded_transaction_indices is not None:
-            response = self._post(encoded_transaction_indices, '{}/block2/height/{}', height, method = 'GET')
+            response = self._post(encoded_transaction_indices, 'block2/height', height, method = 'GET')
         else:
-            response = self._get(encoded_transaction_indices, '{}/block2/height/{}', height)
+            response = self._get(encoded_transaction_indices, 'block2/height', height)
         return response.content
 
     def block_current(self):
         '''Return the current block.'''
-        response = self._get('{}/block/current')
+        response = self._get('block/current')
         return json.loads(response.text)
 
     def current_block(self):
         '''Deprecated for block_current() 12/07/2018'''
-        response = self._get('{}/current_block')
+        response = self._get('current_block')
         return json.loads(response.text)
 
     def tx_field(self, hash, field):
@@ -441,7 +447,7 @@ class Peer(HTTPClient):
         
         {field} := { 'id' | 'last_tx' | 'owner' | 'tags' | 'target' | 'quantity' | 'data' | 'signature' | 'reward' }
         '''
-        response = self._get('{}/tx/{}/{}', hash, field)
+        response = self._get('tx', hash, field)
         return json.loads(response.text)
 
     def tx_id(self, hash):
@@ -495,5 +501,5 @@ class Peer(HTTPClient):
         The provided transaction ID is not valid or the field name is not valid: Invalid hash.
         A transaction with the given ID could not be found: Not Found.
         '''
-        response = self._get('{}/{}{}/', txid, ext)
+        response = self._get(txid + ext, '')
         return response.content
