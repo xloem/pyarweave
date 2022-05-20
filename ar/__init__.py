@@ -18,7 +18,7 @@ DEFAULT_API_URL = "https://arweave.net"
 
 logger = logging.getLogger(__name__)
 
-class ArweaveTransactionException(Exception):
+class ArweaveException(Exception):
     pass
 
 from .peer import Peer

@@ -65,7 +65,7 @@ class Transaction(object):
             self.quantity = kwargs.get('quantity', '0')
             if float(self.quantity) > 0:
                 if self.target == '':
-                    raise ArweaveTransactionException(
+                    raise ArweaveException(
                         "Unable to send {} AR without specifying a target address".format(self.quantity))
 
                 # convert to winston
@@ -88,7 +88,7 @@ class Transaction(object):
         if type(transaction_json) == str:
             self.load(json.loads(transaction_json))
         else:
-            raise ArweaveTransactionException(
+            raise ArweaveException(
                 "Please supply a string containing json to initialize a serialized transaction")
 
     def get_reward(self, data_size, target_address=None):
@@ -170,7 +170,7 @@ class Transaction(object):
     def send(self):
         try:
             self.peer.send_tx(self.json_data)
-        except ArweaveTransactionException:
+        except ArweaveException:
             pass
 
         return self.last_tx
@@ -218,21 +218,21 @@ class Transaction(object):
     def get_status(self):
         try:
             self.status = self.peer.tx_status(self.id)
-        except ArweaveTransactionException:
+        except ArweaveException:
             self.status = "PENDING"
         return self.status
 
     def get_transaction(self):
         try:
             self.load(self.peer.tx(self.id))
-        except ArweaveTransactionException as exception:
+        except ArweaveException as exception:
             pass
 
     def get_price(self):
         try:
             price = self.peer.price(self.data_size)
             return winston_to_ar(price)
-        except TransactionException as exception:
+        except ArweaveException as exception:
             pass
 
     def get_data(self):
@@ -270,7 +270,7 @@ class Transaction(object):
 
     def get_chunk(self, idx):
         if self.chunks is None:
-            raise ArweaveTransactionException("Chunks have not been prepared")
+            raise ArweaveException("Chunks have not been prepared")
 
         proof = self.chunks.get('proofs')[idx]
         chunk = self.chunks.get('chunks')[idx]
