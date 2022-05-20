@@ -86,10 +86,12 @@ class Transaction(object):
 
     def from_serialized_transaction(self, transaction_json):
         if type(transaction_json) == str:
-            self.load(json.loads(transaction_json))
+            transaction_json = json.loads(transaction_json)
+        if type(transaction_json) == dict:
+            self.load(transaction_json)
         else:
             raise ArweaveException(
-                'Please supply a string containing json to initialize a serialized transaction')
+                'Please supply a string or dict containing json to initialize a serialized transaction')
 
     def get_reward(self, data_size, target_address=None):
         reward = self.peer.price(data_size, target_address)

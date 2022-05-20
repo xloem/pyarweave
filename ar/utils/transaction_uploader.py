@@ -19,10 +19,11 @@ import time
 import requests
 import logging
 from jose.utils import base64url_encode, base64url_decode
-from .arweave_lib import Transaction
-from .utils import *
+from ..transaction import Transaction
+from ..peer import Peer
+from .. import DEFAULT_API_URL
+from . import *
 from .merkle import validate_path, CHUNK_SIZE
-from .arweave_lib import API_URL
 
 try:
     from signal import signal, SIGPIPE, SIG_DFL
@@ -233,40 +234,15 @@ class TransactionUploader:
         self.tx_posted = True
 
 
-class TransactionDownloaderException(Exception):
-    pass
+def get_transaction_offset(tx_id, api_url = DEFAULT_API_URL):
+    return Peer(api_url).tx_offset(tx_id)
 
 
-def get_transaction_offset(tx_id):
-    url = '{}/tx/{}/offset'.format(API_URL, tx_id)
+def get_chunk(offset, api_url = DEFAULT_API_URL):
+    return Peer(api_url).chunk(offset)
 
-    response = requests.get(url)
-    response_json = json.loads(response.text)
-
-    if response.status_code == 200:
-        return int(response_json.get('data'))
-    else:
-        raise TransactionDownloaderException(
-            'Unable to get transaction offset: {}'.format(response_json.get('error'))
-        )
-
-
-def get_chunk(offset):
-    url = '{}/chunk/{}'.format(API_URL, offset)
-
-    response = requests.get(url)
-    response_json = json.loads(response.text)
-
-    if response.status_code == 200:
-        return response_json.get('data')
-    else:
-        raise TransactionDownloaderException(
-            'Unable to get chunk: {}'.format(response_json.get('error'))
-        )
-
-
-def get_chunk_data(offset):
-    chunk = get_chunk(offset)
+def get_chunk_data(offset, api_url = DEFAULT_API_URL):
+    chunk = get_chunk(offset, api_url)
     buf = base64url_decode(chunk.get('chunk'))
     return buf
 
@@ -315,25 +291,9 @@ def from_serialized(self, file_handler, json_str):
     )
 
 
-def from_transaction_id(file_handler, transaction_str, wallet, api_url=API_URL):
-    tx = json.loads(transaction_str)
-
-    url = '{}/tx/{}'.format(api_url, tx.get('id'))
-
-    headers = {'Content-Type': 'application/json', 'Accept': 'text/plain'}
-
-    response = requests.get(url, headers=headers)
-
-    logger.error('{}'.format(response.text))
-
-    if response.status_code == 200:
-        logger.debug('RESPONSE 200: {}'.format(response.text))
-    else:
-        raise TransactionUploaderException('Tx {} not found: {} {}'.format(
-            tx.get('id'),
-            response.status_code,
-            response.text)
-        )
+def from_transaction_id(file_handler, transaction_str, wallet, api_url=DEFAULT_API_URL):
+    peer = Peer(api_url)
+    tx = peer.tx(json.loads(transaction_str))
 
     serialized = TransactionUploader(
         tx_posted=True,
@@ -345,7 +305,7 @@ def from_transaction_id(file_handler, transaction_str, wallet, api_url=API_URL):
         transaction=Transaction(
             wallet,
             file_handler=file_handler,
-            transaction=response.text
+            transaction=tx
         )
     )
 
