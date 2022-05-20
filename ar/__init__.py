@@ -21,6 +21,8 @@ logger = logging.getLogger(__name__)
 class ArweaveException(Exception):
     pass
 
+ArweaveTransactionException = ArweaveException
+
 from .peer import Peer
 from .wallet import Wallet
 from .transaction import Transaction
