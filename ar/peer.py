@@ -58,11 +58,13 @@ class Peer(HTTPClient):
     # - https://docs.arweave.org/developers/server/http-api
     # - https://github.com/ArweaveTeam/arweave/blob/master/apps/arweave/src/ar_http_iface_middleware.erl#L132
     # - https://github.com/ArweaveTeam/arweave/blob/master/apps/arweave/src/ar_http_iface_client.erl
+    def __init__(self, api_url = DEFAULT_API_URL, timeout = None, retries = 5):
+        super().__init__(api_url, timeout, retries)
 
     def info(self):
         '''Return network information from a given node.'''
         response = self._get('info')
-        return response.json
+        return response.json()
 
     def time(self):
         '''Return the current universal time in seconds.'''
@@ -72,12 +74,12 @@ class Peer(HTTPClient):
     def tx_pending(self):
         '''Return all mempool transactions.'''
         response = self._get('tx/pending')
-        return response.json
+        return response.json()
 
     def queue(self):
         '''Return outgoing transaction priority queue.'''
         response = self._get('queue')
-        return response.json
+        return response.json()
 
     def tx_status(self, hash):
         '''
@@ -90,12 +92,12 @@ class Peer(HTTPClient):
         }
         '''
         response = self._get('tx', txid, 'status')
-        return response.json
+        return response.json()
 
     def tx(self, txid):
         '''Return a JSON-encoded transaction.'''
         tx_response = self._get('tx', txid)
-        return response.json
+        return response.json()
 
     def tx2(self, txid):
         '''Return a binary-encoded transaction.'''
@@ -105,7 +107,7 @@ class Peer(HTTPClient):
     def unconfirmed_tx(self, txid):
         '''Return a possibly unconfirmed JSON-encoded transaction.'''
         tx_response = self._get('unconfirmed_tx', txid)
-        return response.json
+        return response.json()
 
     def unconfirmed_tx2(self, txid):
         '''Return a possibly unconfirmed binary-encoded transaction.'''
@@ -148,7 +150,7 @@ class Peer(HTTPClient):
         }
         '''
         response = self._post(logical_expression, 'arql')
-        return response.json
+        return response.json()
 
     def tx_data_html(self, txid):
         '''
@@ -171,7 +173,7 @@ class Peer(HTTPClient):
 
     def chunk(self, offset):
         response = self._get('chunk', offset)
-        return response.json
+        return response.json()
 
     def chunk2(self, offset):
         response = self._get('chunk2', offset)
@@ -187,7 +189,7 @@ class Peer(HTTPClient):
         }
         '''
         response = self._get('tx', hash, 'offset')
-        return response.json
+        return response.json()
 
     def send_chunk(self, json_data):
         '''
@@ -203,7 +205,7 @@ class Peer(HTTPClient):
         }
         '''
         response = self._post(json_data, 'chunk')
-        return response.json
+        return response.json()
 
     def block_announcement(self, block_announcement):
         '''
@@ -212,7 +214,7 @@ class Peer(HTTPClient):
         208: already processing the block
         '''
         response = self._post(block_announcement, 'block_announcement')
-        return response.json
+        return response.json()
 
     def block(self, block):
         '''Accept a JSON-encoded block with Base64Url encoded fields.'''
@@ -236,7 +238,7 @@ class Peer(HTTPClient):
         }
         '''
         response = self._post(secret, 'wallet')
-        return response.json
+        return response.json()
 
     def send_tx(self, json_data):
         '''Accept a new JSON-encoded transaction.'''
@@ -256,12 +258,12 @@ class Peer(HTTPClient):
         WARNING: only use it if you really really know what you are doing.
         '''
         response = self._post(secret, 'unsigned_tx')
-        return response.json
+        return response.json()
 
     def peers(self):
         '''Return the list of peers held by the node.'''
         response = self._get('peers')
-        return response.json
+        return response.json()
 
     def price(self, data_size=0, target_address=None):
         '''Return the estimated transaction fee not including a new wallet fee.'''
@@ -283,7 +285,7 @@ class Peer(HTTPClient):
             response = self._get('hash_list', from_height, to_height, **kwparams)
         else:
             response = self._get('hash_list', **kwparams)
-        return response.json
+        return response.json()
 
     def block_index(self, from_height = None, to_height = None, as_hash_list = False):
         '''Return the current JSON-encoded hash list held by the node.'''
@@ -294,7 +296,7 @@ class Peer(HTTPClient):
             response = self._get('block_index', from_height, to_height, **kwparams)
         else:
             response = self._get('block_index', **kwparams)
-        return response.json
+        return response.json()
     
     def block_index2(self):
         '''Return the current binary-encoded block index held by the node.'''
@@ -303,7 +305,7 @@ class Peer(HTTPClient):
 
     def recent_hash_list(self):
         response = self._get('recent_hash_list')
-        return response.json
+        return response.json()
 
     def recent_hash_list_diff(self, hash_list_binary):
         '''
@@ -313,7 +315,7 @@ class Peer(HTTPClient):
         about the missed blocks and their transactions so that they can catch up quickly.
         '''
         response = self._post(hash_list_binary, 'recent_hash_list_diff', method='GET')
-        return response.json
+        return response.json()
 
     def wallet_list(self, encoded_root_hash = None, encoded_cursor = None, wallet_list_chunk_size = None):
         '''
@@ -332,7 +334,7 @@ class Peer(HTTPClient):
             response = self._get('wallet_list', encoded_root_hash, wallet_list_chunk_size)
         else:
             response = self._get('wallet_list')
-        return response.json
+        return response.json()
 
     def wallet_list_balance(self, encoded_root_hash, encoded_addr):
         '''Return the balance of the given address from the wallet tree with the given root hash.'''
@@ -374,7 +376,7 @@ class Peer(HTTPClient):
             response = self._get('wallet', wallet_address, 'txs', earliest_tx)
         else:
             response = self._get('wallet', wallet_address, 'txs')
-        return response.json
+        return response.json()
 
     def wallet_deposits(self, wallet_address, earliest_deposit = None):
         '''
@@ -385,7 +387,7 @@ class Peer(HTTPClient):
             response = self._get('wallet', wallet_address, 'deposits', earliest_deposit)
         else:
             response = self._get('wallet', wallet_address, 'deposits')
-        return response.json
+        return response.json()
 
     def block_hash(self, hash, field = None):
         '''Return the JSON-encoded block or field of a block with the given hash.'''
@@ -393,7 +395,7 @@ class Peer(HTTPClient):
             response = self._get('block/hash', hash, field)
         else:
             response = self._get('block/hash', hash)
-        return response.json
+        return response.json()
 
     def block_height(self, height, field = None):
         '''Return the JSON-encoded block or field of a block with the given height.'''
@@ -401,7 +403,7 @@ class Peer(HTTPClient):
             response = self._get('block/height', height, field)
         else:
             response = self._get('block/height', height)
-        return response.json
+        return response.json()
 
     def block2_hash(self, hash, encoded_transaction_indices = None):
         '''
@@ -440,12 +442,12 @@ class Peer(HTTPClient):
     def block_current(self):
         '''Return the current block.'''
         response = self._get('block/current')
-        return response.json
+        return response.json()
 
     def current_block(self):
         '''Deprecated for block_current() 12/07/2018'''
         response = self._get('current_block')
-        return response.json
+        return response.json()
 
     def tx_field(self, hash, field):
         '''
@@ -454,7 +456,7 @@ class Peer(HTTPClient):
         {field} := { 'id' | 'last_tx' | 'owner' | 'tags' | 'target' | 'quantity' | 'data' | 'signature' | 'reward' }
         '''
         response = self._get('tx', hash, field)
-        return response.json
+        return response.json()
 
     def tx_id(self, hash):
         '''Return transaction id.'''
