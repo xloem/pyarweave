@@ -1,17 +1,51 @@
 import json, requests
 
-from . import DEFAULT_API_URL, logger, ArweaveTransactionException
+from . import DEFAULT_API_URL, logger, ArweaveException
 
-class Peer(object):
+class HTTPClient:
+    def __init__(self, api_url, timeout = None, retries = 5):
+        self.api_url = api_url
+        self.session = requests.Session()
+        max_retries = requests.adapters.Retry(total=retries, backoff_factor=0.1, status_forcelist=[500,502,503,504]) # from so
+        self.session.mount('http://', requests.adapters.HTTPAdapter(max_retries=max_retries))
+        self.session.mount('https://', requests.adapters.HTTPAdapter(max_retries=max_retries))
+        self.timeout = timeout
+
+    def _get(self, format = "{}", *params, **request_kwparams):
+        url = format.format(self.api_url, *params)
+
+        response = self.session.request(**{"method": "GET", "url": url, "timeout": self.timeout, **request_kwparams})
+
+        if response.status_code == 200:
+            return response
+        else:
+            logger.error(response.text)
+            raise ArweaveException(response.text)
+
+    def _post(self, data, format = "{}", *params, **request_kwparams):
+        url = format.format(self.api_url, *params)
+
+        headers = {'Content-Type': 'application/json', 'Accept': 'text/plain'}
+
+        if type(data) is dict:
+            response = self.session.request(**{"method": "POST", "url": url, "json": data, "headers": headers, "timeout": self.timeout, **request_kwparams})
+        else:
+            response = self.session.request(**{"method": "POST", "url": url, "data": data, "headers": headers, "timeout": self.timeout, **request_kwparams})
+
+        logger.debug("{}\n\n{}".format(response.text, data))
+
+        if response.status_code == 200:
+            logger.debug("RESPONSE 200: {}".format(response.text))
+            return response
+        else:
+            logger.error("{}\n\n{}".format(response.text, data))
+            raise ArweaveException(response.text, data)
+
+class Peer(HTTPClient):
     # peer api [incomplete]:
     # - https://docs.arweave.org/developers/server/http-api
     # - https://github.com/ArweaveTeam/arweave/blob/master/apps/arweave/src/ar_http_iface_middleware.erl#L132
     # - https://github.com/ArweaveTeam/arweave/blob/master/apps/arweave/src/ar_http_iface_client.erl
-
-    def __init__(self, api_url = DEFAULT_API_URL):
-        self.api_url = api_url
-        self.session = requests.Session()
-
 
     def info(self):
         """Return network information from a given node."""
@@ -463,36 +497,3 @@ class Peer(object):
         """
         response = self._get("{}/{}{}/", txid, ext)
         return response.content
-
-
-    def _get(self, format = "{}", *params, **request_kwparams):
-        url = format.format(self.api_url, *params)
-
-        request = requests.Request(**{"method": "GET", "url": url, **request_kwparams})
-        response = self.session.send(request.prepare())
-
-        if response.status_code == 200:
-            return response
-        else:
-            logger.error(response.text)
-            raise ArweaveTransactionException(response.text)
-
-    def _post(self, data, format = "{}", *params, **request_kwparams):
-        url = format.format(self.api_url, *params)
-
-        headers = {'Content-Type': 'application/json', 'Accept': 'text/plain'}
-
-        if type(data) is dict:
-            request = requests.Request(**{"method": "POST", "url": url, "json": data, "headers": headers, **request_kwparams})
-        else:
-            request = requests.Request(**{"method": "POST", "url": url, "data": data, "headers": headers, **request_kwparams})
-        response = self.session.send(request.prepare())
-
-        logger.debug("{}\n\n{}".format(response.text, data))
-
-        if response.status_code == 200:
-            logger.debug("RESPONSE 200: {}".format(response.text))
-            return response
-        else:
-            logger.error("{}\n\n{}".format(response.text, data))
-            raise ArweaveTransactionException(response.text, data)
