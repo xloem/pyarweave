@@ -14,6 +14,7 @@ from .utils import (
 from .peer import Peer
 from .utils.deep_hash import deep_hash
 from .utils.merkle import compute_root_hash, generate_transaction_chunks
+from . import logger
 
 class Transaction(object):
     def __init__(self, wallet, **kwargs):

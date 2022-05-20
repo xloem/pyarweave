@@ -22,5 +22,6 @@ class ArweaveTransactionException(Exception):
     pass
 
 from .peer import Peer
+from .wallet import Wallet
 from .transaction import Transaction
-from .arweave_lib import Wallet, arql
+from .arweave_lib import arql
