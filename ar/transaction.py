@@ -28,7 +28,7 @@ class Transaction(object):
         self.tags = []
         self.format = kwargs.get('format', 2)
 
-        self.peer = Peer(DEFAULT_API_URL)
+        self.peer = Peer()
         self.chunks = None
 
         data = kwargs.get('data', '')
