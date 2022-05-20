@@ -30,10 +30,22 @@ class Wallet(object):
     def set_api_url(self, api_url):
         self.peer.api_url = api_url
 
-    def __init__(self, jwk_file='jwk_file.json'):
-        with open(jwk_file, 'r') as j_file:
-            self.jwk_data = json.loads(j_file.read())
+    def __init__(self, jwk_file='jwk_file.json', jwk_data=None):
+        if jwk_data is not None:
+            self.jwk_data = jwk_data
+        else:
+            with open(jwk_file, 'r') as j_file:
+                self.jwk_data = json.loads(j_file.read())
         self._set_jwk_params()
+
+    @classmethod
+    def generate(cls, bits = 4096, jwk_file = None):
+        key = RSA.generate(4096)
+        jwk_data = jwk.RSAKey(key.export_key(), jwk.ALGORITHMS.RS256).to_dict()
+        if jwk_file is not None:
+            with open(jwk_file, 'xt') as jwk_fh:
+                json.dump(jwk_data, fh)
+        return cls(jwk_file = jwk_file, jwk_data = jwk_data)
 
     @classmethod
     def from_data(cls, jwk_data):
