@@ -268,9 +268,9 @@ class Peer(HTTPClient):
     def price(self, data_size=0, target_address=None):
         '''Return the estimated transaction fee not including a new wallet fee.'''
         if target_address is not None:
-            response = self._get('price', data_size, target_address)
+            response = self._get('price', str(data_size), target_address)
         else:
-            response = self._get('price', data_size)
+            response = self._get('price', str(data_size))
         return response.text
 
     def hash_list(self, from_height = None, to_height = None, as_hash_list = True):
@@ -509,5 +509,5 @@ class Peer(HTTPClient):
         The provided transaction ID is not valid or the field name is not valid: Invalid hash.
         A transaction with the given ID could not be found: Not Found.
         '''
-        response = self._get(txid + ext, '')
+        response = self._get(txid + ext)
         return response.content

@@ -1,6 +1,7 @@
 import json
 import os
 import io
+import hashlib
 from jose import jwk
 from jose.utils import base64url_encode
 from .utils import (
@@ -121,7 +122,7 @@ class Transaction(object):
             self.id = self.id.decode()
 
     def get_signature_data(self):
-        self.reward = self.get_reward(self.data_size, target_address=self.target if len(self.target) > 0 else None)
+        self.reward = str(self.get_reward(self.data_size, target_address=self.target if len(self.target) > 0 else None))
 
         if int(self.data_size) > 0 and self.data_root == '' and not self.uses_uploader:
             if type(self.data) == str:
