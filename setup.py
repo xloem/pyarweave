@@ -16,7 +16,7 @@ from setuptools import setup, find_packages
 
 setup(
   name='PyArweave',
-  version='0.2.1',
+  version='0.2.2',
   description='Tiny Arweave Library',
   long_description=open('README.md').read(),
   long_description_content_type='text/markdown',
@@ -34,7 +34,6 @@ setup(
     'pynacl',
     'pycryptodome',
     'cryptography',
-    'requests',
-    'psutil'
+    'requests'
   ],
 )
