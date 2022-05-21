@@ -33,7 +33,6 @@ setup(
     'python-jose',
     'pynacl',
     'pycryptodome',
-    'cryptography', # this requires rust by default and is not ideal
     'requests'
   ],
 )
