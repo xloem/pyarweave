@@ -30,8 +30,9 @@ setup(
   packages = find_packages(),
   install_requires=[ # try to reduce these
     'arrow',
-    'python-jose',
+    'python-jose', # for jwk parsing: note jwk is very simple
     'pycryptodome',
-    'requests'
+    'requests', # for network calls
+    'fastavro' # for bundlr tag serialization
   ],
 )
