@@ -15,7 +15,7 @@ schema = fastavro.parse_schema({
 
 def serialize_buffer(tags_dict):
     output = io.BytesIO()
-    tag_records = [{"name":name,"value":value} for name, value in tags_dict.items()]
+    tag_records = [{'name':name,'value':value} for name, value in tags_dict.items()]
     fastavro.schemaless_writer(output, schema, tag_records)
     return output.getbuffer()
 
