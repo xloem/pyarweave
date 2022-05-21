@@ -1,4 +1,5 @@
 import io
+import struct
 import fastavro
 from Crypto.Random import get_random_bytes
 from . import keys
