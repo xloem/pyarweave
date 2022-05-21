@@ -31,7 +31,6 @@ setup(
   install_requires=[ # try to reduce these
     'arrow',
     'python-jose',
-    'pynacl',
     'pycryptodome',
     'requests'
   ],
