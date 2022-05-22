@@ -1,5 +1,6 @@
 import json
 from jose import jwk
+from jose.utils import base64url_decode
 from Crypto.PublicKey import RSA
 from Crypto.Signature import PKCS1_PSS
 from Crypto.Hash import SHA256
@@ -14,7 +15,13 @@ from .peer import Peer
 class Wallet(object):
     HASH = 'sha256'
 
-    def _set_jwk_params(self):
+    def __init__(self, jwk_file='jwk_file.json', jwk_data=None):
+        if jwk_data is not None:
+            self.jwk_data = jwk_data
+        else:
+            with open(jwk_file, 'r') as j_file:
+                self.jwk_data = json.loads(j_file.read())
+
         self.jwk_data['p2s'] = ''
         self.jwk = jwk.construct(self.jwk_data, algorithm=jwk.ALGORITHMS.RS256)
         self.rsa = RSA.importKey(self.jwk.to_pem())
@@ -23,20 +30,6 @@ class Wallet(object):
         self.address = owner_to_address(self.owner)
 
         self.peer = Peer(DEFAULT_API_URL)
-    @property
-    def api_url(self):
-        return self.peer.api_url
-    @api_url.setter
-    def set_api_url(self, api_url):
-        self.peer.api_url = api_url
-
-    def __init__(self, jwk_file='jwk_file.json', jwk_data=None):
-        if jwk_data is not None:
-            self.jwk_data = jwk_data
-        else:
-            with open(jwk_file, 'r') as j_file:
-                self.jwk_data = json.loads(j_file.read())
-        self._set_jwk_params()
 
     @classmethod
     def generate(cls, bits = 4096, jwk_file = None):
@@ -49,15 +42,23 @@ class Wallet(object):
 
     @classmethod
     def from_data(cls, jwk_data):
-        wallet = cls.__new__(cls)
-        wallet.jwk_data = jwk_data
-        wallet._set_jwk_params()
-        return wallet
+        return cls(jwk_data = jwk_data)
+
+    @property
+    def api_url(self):
+        return self.peer.api_url
+    @api_url.setter
+    def set_api_url(self, api_url):
+        self.peer.api_url = api_url
 
     @property
     def balance(self):
         balance = self.peer.wallet_balance(self.address)
         return winston_to_ar(balance)
+
+    @property
+    def raw_owner(self):
+        return base64url_decode(self.jwk_data['n'].encode())
 
     def sign(self, message):
         h = SHA256.new(message)

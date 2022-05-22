@@ -21,8 +21,7 @@ import sys
 from jose.utils import base64url_decode
 
 def test_serialize_unsigned():
-    owner = base64url_decode(wallet.jwk_data['n'].encode())
-    dataitem = DataItem(owner = owner, anchor = b'00000000000000000000000000000000', tags = {'name':'value'}, data = b'Hello, world.')
+    dataitem = DataItem(owner = wallet.raw_owner, anchor = b'00000000000000000000000000000000', tags = {'name':'value'}, data = b'Hello, world.')
     assert dataitem.tobytes() == (
         b'\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00' +
         b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00' +
