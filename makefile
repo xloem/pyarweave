@@ -9,6 +9,7 @@ help:
 ensure-git:
 	git update-index --refresh 
 	git diff-index --quiet HEAD --
+	u="$$(git ls-files --others --exclude-standard | tee /dev/stderr)" && test -z "$$u"
 	git push
 
 twine_check:
