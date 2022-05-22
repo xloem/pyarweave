@@ -13,15 +13,14 @@
 # PyArweave. If not, see <https://www.gnu.org/licenses/>.
 
 
-from bundlr import DataItem
-from ar import Wallet
+from ar import Wallet, DataItem, ANS104DataItemHeader
 import pytest
 
 import sys
 from jose.utils import base64url_decode
 
 def test_serialize_unsigned():
-    dataitem = DataItem(owner = wallet.raw_owner, anchor = b'00000000000000000000000000000000', tags = [{'name':'name','value':'value'}], data = b'Hello, world.')
+    dataitem = DataItem(ANS104DataItemHeader(owner = wallet.raw_owner, anchor = b'00000000000000000000000000000000', tags = [{'name':b'name','value':b'value'}]), data = b'Hello, world.')
     assert dataitem.tobytes() == (
         b'\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00' +
         b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00' +
@@ -82,7 +81,7 @@ def test_serialize_unsigned():
         b'\x00\x02\x08name\nvalue\x00Hello, world.'
     )
 
-    dataitem.sign(wallet.jwk_data)
+    dataitem.sign(wallet.rsa)
     dataitem = DataItem.frombytes(dataitem.tobytes())
     assert dataitem.verify()
 
