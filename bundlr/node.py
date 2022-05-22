@@ -46,10 +46,10 @@ class Node(HTTPClient):
         Uploads a given transaction to the bundler
 
         {
-            "id",
-            "public",
-            "signature",
-            "block"
+            "id": "<arweave txid for data>",
+            "public": "<public key>",
+            "signature": "<signature>",
+            "block": "<cutoff height by which tx must be mined in arweave>"
         }
         402: Not enough funds to send data
         '''
