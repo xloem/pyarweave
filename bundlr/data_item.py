@@ -11,7 +11,7 @@ from ar.utils.deep_hash import deep_hash
 
 # this could read straight from a file and not need to allocate as much memory
 
-# NOTE: these are simply ans104 bundle dataitems. they're actually not specific to bundlr.
+# NOTE: these seem very similar to ans104 bundle dataitems, but i'm not sure whether they're precisely the same
 
 class DataItem:
     MIN_BINARY_SIZE = 80
