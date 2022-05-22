@@ -29,4 +29,5 @@ from .peer import Peer
 from .wallet import Wallet
 from .transaction import Transaction
 from .arweave_lib import arql
+from .bundle import ANS104BundleHeader, ANS104DataItemHeader, DataItem
 
