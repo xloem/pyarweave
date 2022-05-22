@@ -2,6 +2,7 @@ import requests
 from jose.utils import base64url_decode
 
 from . import DEFAULT_API_URL, logger, ArweaveException
+from .utils import response_stream_to_file_object
 
 class HTTPClient:
     def __init__(self, api_url, timeout = None, retries = 5):
@@ -523,3 +524,7 @@ class Peer(HTTPClient):
         '''
         response = self._get(txid + ext)
         return response.content
+
+    def stream(self, txid, ext = ''):
+        response = self._get(txid + ext, stream = True)
+        return response_stream_to_file_object(response)
