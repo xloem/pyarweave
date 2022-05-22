@@ -26,13 +26,17 @@ def b64enc(data):
     return base64url_encode(data).decode()
 
 def b64enc_if_not_str(data):
-    if type(data) is str:
+    if data is None:
+        return None
+    elif type(data) is str:
         return data
     else:
         return base64url_encode(data).decode()
 
 def b64dec_if_not_bytes(data):
-    if isinstance(data, (bytes, bytearray)):
+    if data is None:
+        return b''
+    elif isinstance(data, (bytes, bytearray)):
         return data
     else:
         return base64url_decode(data.encode())
