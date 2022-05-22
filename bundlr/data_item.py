@@ -11,6 +11,7 @@ from ar.utils.deep_hash import deep_hash
 # this could read straight from a file and not need to allocate as much memory
 
 class DataItem:
+    MIN_BINARY_SIZE = 80
     def __init__(self, sig_config = keys.Rsa4096Pss, signature = None, owner = None, target = None, anchor = None, tags = {}, data = None):
         self.sig_config = sig_config
         self.signature = signature
@@ -49,7 +50,7 @@ class DataItem:
         else:
             outfp.write(b'\x00')
 
-        if len(self.tags):
+        if self.tags is not None and len(self.tags):
             _tags = tags.serialize_buffer(self.tags)
             outfp.write(struct.pack('<QQ', len(self.tags), len(_tags)))
             outfp.write(_tags)
@@ -72,3 +73,51 @@ class DataItem:
             tags.serialize_buffer(self.tags) if len(self.tags) else b'',
             self.data
         ])
+
+    def sign(self, jwkjson):
+        self.signature = self.sig_config.sign(jwkjson, self.get_signature_data())
+
+    def verify(self):
+        return self.sig_config.verify(self.owner, self.get_signature_data(), self.signature)
+
+    @classmethod
+    def frombytes(cls, bytes):
+        if len(bytes) < DataItem.MIN_BINARY_SIZE:
+            raise Exception('Length shorter than minimum size')
+
+        infp = io.BytesIO(bytes)
+        
+        rawsigtype = infp.read(2)
+        sigtype = rawsigtype[0] + rawsigtype[1] * 256
+        sig_config = keys.configs.get(sigtype)
+        if sig_config is None:
+            raise Exception(f'Unknown signature type: {sigtype}')
+
+        signature = infp.read(sig_config.signatureLength)
+
+        owner = infp.read(sig_config.ownerLength)
+
+        target_flag = infp.read(1)[0]
+        if target_flag not in b'\x00\x01':
+            raise Exception(f'Unknown target flag value: {targetFlag}')
+
+        target = infp.read(32) if target_flag else None
+
+        anchor_flag = infp.read(1)[0]
+        if anchor_flag not in b'\x00\x01':
+            raise Exception(f'Unknown anchor flag value: {anchorFlag}')
+
+        anchor = infp.read(32) if anchor_flag else None
+
+        tag_count, tags_bytelength = struct.unpack('<QQ', infp.read(16))
+
+        if tags_bytelength != 0:
+            deserialized_tags = tags.deserialize_buffer(infp.read(tags_bytelength))
+            if len(deserialized_tags) != tag_count:
+                raise Exception('Incorrect tag count')
+        else:
+            deserialized_tags = None
+            
+        data_offset = infp.tell()
+
+        return cls(sig_config = sig_config, signature = signature, owner = owner, target = target, anchor = anchor, tags = deserialized_tags, data = bytes[data_offset:])

@@ -83,6 +83,10 @@ def test_serialize_unsigned():
         b'\x00\x02\x08name\nvalue\x00Hello, world.'
     )
 
+    dataitem.sign(wallet.jwk_data)
+    dataitem = DataItem.frombytes(dataitem.tobytes())
+    assert dataitem.verify()
+
 wallet = Wallet(jwk_data = {
     "kty": "RSA",
     "n":

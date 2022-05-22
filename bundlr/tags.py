@@ -21,7 +21,7 @@ def serialize_buffer(tags_dict):
 
 def deserialize_buffer(data):
     fo = io.BytesIO(data)
-    records = fastavro.reader(fo)
+    records = fastavro.schemaless_reader(fo, schema)
     return {
         record['name']: record['value']
         for record in records
