@@ -45,10 +45,16 @@ class Node(HTTPClient):
         '''
         Uploads a given transaction to the bundler
 
+        {
+            "id",
+            "public",
+            "signature",
+            "block"
+        }
         402: Not enough funds to send data
         '''
         response = self._post(transaction_bytes, 'tx', currency)
-        return response.text
+        return response.json()
 
     def send_chunks(self, databytes, txid, offset, currency = DEFAULT_CHAIN):
         response = self._post(databytes, 'chunks', currency, txid, offset)
