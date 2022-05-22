@@ -2,7 +2,7 @@ from jose import jwk
 from Crypto.Util.number import bytes_to_long
 from Crypto.Hash import SHA256
 from Crypto.PublicKey import RSA
-from Crypto.Signature import PKCS1_PSS
+from Crypto.Signature import pss
 
 class Rsa4096Pss: # arweave-style
     signatureType = 1
@@ -14,13 +14,17 @@ class Rsa4096Pss: # arweave-style
         jwkobj = jwk.construct(jwkjson, algorithm=jwk.ALGORITHMS.RS256)
         key = RSA.importKey(jwkobj.to_pem())
         hash = SHA256.new(databytes)
-        return PKCS1_PSS.new(key).sign(hash)
+        return pss.new(key, salt_bytes=478).sign(hash)
 
     @staticmethod
     def verify(ownerbytes, databytes, signaturebytes):
         key = RSA.construct((bytes_to_long(ownerbytes), 65537))
         hash = SHA256.new(databytes)
-        return PKCS1_PSS.new(key).verify(hash, signaturebytes)
+        try:
+            pss.new(key, salt_bytes=478).verify(hash, signaturebytes)
+            return True
+        except (ValueError, TypeError):
+            return False
 
 class Curve25519:
     signatureType = 2

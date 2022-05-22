@@ -83,7 +83,7 @@ class DataItem:
     def verify(self):
         if len(self.tags) > 128:
             return False
-        if len(self.anchor) > 32:
+        if self.anchor is not None and len(self.anchor) > 32:
             return False
         for tag in self.tags:
             if len(tag.keys()) > 2 or 'name' not in tag or 'value' not in tag:
@@ -94,7 +94,7 @@ class DataItem:
                     tag[key] = value
                 if len(value) == 0:
                     return False
-            if len(tag['key']) > 1024:
+            if len(tag['name']) > 1024:
                 return False
             if len(tag['value']) > 3072:
                 return False
