@@ -2,6 +2,7 @@ import io
 import struct
 import fastavro
 from Crypto.Random import get_random_bytes
+from Crypto.Hash import SHA256
 from . import keys
 from . import tags
 from ar.utils.deep_hash import deep_hash
@@ -79,6 +80,10 @@ class DataItem:
 
     def verify(self):
         return self.sig_config.verify(self.owner, self.get_signature_data(), self.signature)
+
+    @property
+    def id(self):
+        return SHA256.new(self.signature).digest()
 
     @classmethod
     def frombytes(cls, bytes):
