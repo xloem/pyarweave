@@ -1,4 +1,5 @@
 import requests
+from jose.utils import base64url_decode
 
 from . import DEFAULT_API_URL, logger, ArweaveException
 
@@ -96,23 +97,27 @@ class Peer(HTTPClient):
 
     def tx(self, txid):
         '''Return a JSON-encoded transaction.'''
-        tx_response = self._get('tx', txid)
-        return response.json()
+        response = self._get('tx', txid)
+        tx = response.json()
+        for tag in tx['tags']:
+            for key in tag:
+                tag[key] = base64url_decode(tag[key].encode())
+        return tx
 
     def tx2(self, txid):
         '''Return a binary-encoded transaction.'''
-        tx_response = self._get('tx2', txid)
-        return tx_response.content
+        response = self._get('tx2', txid)
+        return response.content
 
     def unconfirmed_tx(self, txid):
         '''Return a possibly unconfirmed JSON-encoded transaction.'''
-        tx_response = self._get('unconfirmed_tx', txid)
+        response = self._get('unconfirmed_tx', txid)
         return response.json()
 
     def unconfirmed_tx2(self, txid):
         '''Return a possibly unconfirmed binary-encoded transaction.'''
-        tx_response = self._get('unconfirmed_tx2', txid)
-        return tx_response.content
+        response = self._get('unconfirmed_tx2', txid)
+        return response.content
 
     def arql(self, logical_expression):
         '''
@@ -364,8 +369,8 @@ class Peer(HTTPClient):
 
     def tx_anchor(self):
         '''Return a block anchor to use for building transactions.'''
-        last_tx_response = self._get('tx_anchor')
-        return last_tx_response.text
+        response = self._get('tx_anchor')
+        return response.text
 
     def wallet_txs(self, wallet_address, earliest_tx = None):
         '''
@@ -456,7 +461,14 @@ class Peer(HTTPClient):
         {field} := { 'id' | 'last_tx' | 'owner' | 'tags' | 'target' | 'quantity' | 'data' | 'signature' | 'reward' }
         '''
         response = self._get('tx', hash, field)
-        return response.json()
+        if field == 'tags':
+            tags = response.json()
+            for tag in tags:
+                for key in tag:
+                    tag[key] = base64url_decode(tag[key].encode())
+            return tags
+        else:
+            return response.json()
 
     def tx_id(self, hash):
         '''Return transaction id.'''

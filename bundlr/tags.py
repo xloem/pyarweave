@@ -13,24 +13,18 @@ schema = fastavro.parse_schema({
   }  
 })
 
-def serialize_buffer(tags_obj):
+def serialize_buffer(tag_records):
     output = io.BytesIO()
-    if isinstance(tags_obj, dict):
-        tags_obj = tags_obj.items()
     tag_records = [
         {
-            'name': name if isinstance(name,(bytes,bytearray)) else str(name).encode(),
-            'value': value if isinstance(value,(bytes,bytearray)) else str(value).encode()
+            key: value if isinstance(value, (bytes, bytearray)) else str(value).encode()
+            for key, value in tag_record.items()
         }
-        for name, value in tags_obj
+        for tag_record in tag_records
     ]
     fastavro.schemaless_writer(output, schema, tag_records)
     return output.getbuffer()
 
 def deserialize_buffer(data):
     fo = io.BytesIO(data)
-    records = fastavro.schemaless_reader(fo, schema)
-    return [
-        (record['name'], record['value'])
-        for record in records
-    ]
+    return fastavro.schemaless_reader(fo, schema)
