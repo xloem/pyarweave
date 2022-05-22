@@ -225,7 +225,7 @@ class ANS104DataItemHeader:
                 decode_tag(tag)
                 for tag in json['tags']
             ],
-            key = signer.public_key(b64dec(json['owner'])),
+            owner = b64dec(json['owner']),
             target = json['target'],
             anchor = json['nonce'],
             signer = signer
@@ -386,6 +386,13 @@ class DataItem:
 class Bundle:
     def __init__(self, dataitems, version = 2):
         self.dataitems = dataitems
+
+    def sign(self, private_key):
+        for dataitem in self.dataitems:
+            dataitem.sign(private_key)
+
+    def verify(self):
+        return all(dataitem.verify() for dataitem in self.dataitems)
 
     @property
     def header(self):
