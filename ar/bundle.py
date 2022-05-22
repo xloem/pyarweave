@@ -34,8 +34,8 @@ class ANS104BundleHeader:
         return self.length_by_id(id)
 
     def get_offset(self, id):
+        total = self.get_len_bytes()
         id = b64enc_if_not_str(id)
-        total = 0
         for other_id, length in self.length_by_id.items():
             if other_id == id:
                 return total
@@ -49,6 +49,22 @@ class ANS104BundleHeader:
             u256enc(length) + b64dec(id)
             for id, length in self.length_by_id.items()
         ))
+
+    @classmethod
+    def from_tags_stream(cls, tags, stream):
+        fmt = tags[b'Bundle-Format']
+        if fmt == b'json':
+            return cls.fromjson(json.load(stream))
+        elif fmt == b'binary':
+            return cls.fromstream(stream)
+
+    @classmethod
+    def fromjson(cls, json):
+        dataitems = (DataItem.fromjson(item) for item in json['items'])
+        return cls({
+            dataitem.id: dataitem.get_len_bytes()
+            for dataitem in dataitems
+        })
 
     @classmethod
     def frombytes(cls, data):
@@ -216,11 +232,11 @@ class ANS104DataItemHeader:
         )
 
     @classmethod
-    def frombytes(cls, data, length = None):
+    def frombytes(cls, data):
         if len(data) < 80:
             raise Exception('length shorter than 80 bytes')
         stream = io.BytesIO(data)
-        return cls.fromstream(stream, length = length)
+        return cls.fromstream(stream)
 
     @classmethod
     def fromstream(cls, stream):
@@ -367,18 +383,40 @@ class DataItem:
             data = stream.read(length - header.get_len_bytes())
         return cls(header = header, data = data, version = 2)
 
+class Bundle:
+    def __init__(self, dataitems, version = 2):
+        self.dataitems = dataitems
 
-if __name__ == '__main__':
-    from ar import Peer
-    peer = Peer()
-    print('QaxLv87sMumEGCqKudjDP8JBiT5r0fYP4-VZB0An4s0')
-    with peer.stream('QaxLv87sMumEGCqKudjDP8JBiT5r0fYP4-VZB0An4s0') as stream:
+    @property
+    def header(self):
+        return ANS104BundleHeader({
+            item.id: item.get_len_bytes()
+            for item in self.dataitems
+        })
+
+    def tojson(self):
+        return {
+            'items': [
+                dataitem.tojson()
+                for dataitem in self.dataitems
+            ]
+        }
+
+    def tobytes(self):
+        return self.header + b''.join(item.tobytes() for item in self.dataitems)
+    
+    @classmethod
+    def fromjson(cls, json):
+        dataitems = [DataItem.fromjson(item) for item in json['items']]
+        return cls(dataitems, version = 1)
+
+    @classmethod
+    def frombytes(cls, bytes):
+        stream = io.BytesIO(bytes)
+        return self.fromstream(stream)
+
+    @classmethod
+    def fromstream(cls, stream):
         header = ANS104BundleHeader.fromstream(stream)
-        for id, length in header.length_by_id.items():
-            offset = stream.tell()
-            dataitem = DataItem.fromstream(stream, length)
-            print(id, dataitem.header.tags, len(dataitem.data))
-            try:
-                assert dataitem.verify()
-            except NotImplementedError:
-                continue
+        dataitems = [DataItem.fromstream(stream, length) for id, length in header.length_by_id.items()]
+        return cls(dataitems, version = 2)
