@@ -25,11 +25,11 @@ class HTTPClient:
             logger.error(response.text)
             raise ArweaveException(response.text)
 
-    def _post(self, data, *params, **request_kwparams):
-        if len(params) and param[-1][0] == '?':
-            url = api_url + '/' + '/'.join(params[:-1]) + params[1]
+    def _post(self, data, *params, headers = {}, **request_kwparams):
+        if len(params) and params[-1][0] == '?':
+            url = self.api_url + '/' + '/'.join(params[:-1]) + params[1]
         else:
-            url = api_url + '/' + '/'.join(params)
+            url = self.api_url + '/' + '/'.join(params)
 
         headers = {**headers}
 
