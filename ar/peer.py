@@ -158,6 +158,14 @@ class Peer(HTTPClient):
         response = self._post(logical_expression, 'arql')
         return response.json()
 
+    def graphql(self, query):
+        response = self._post({
+            'operationName': None,
+            'query': query,
+            'variables': {}
+        }, 'graphql')
+        return response.json()
+
     def tx_data_html(self, txid):
         '''
         Return the data field of the transaction specified via the transaction ID (hash)
