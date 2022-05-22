@@ -11,9 +11,11 @@ from ar.utils.deep_hash import deep_hash
 
 # this could read straight from a file and not need to allocate as much memory
 
+# NOTE: these are simply ans104 bundle dataitems. they're actually not specific to bundlr.
+
 class DataItem:
     MIN_BINARY_SIZE = 80
-    def __init__(self, sig_config = keys.Rsa4096Pss, signature = None, owner = None, target = None, anchor = None, tags = {}, data = None):
+    def __init__(self, sig_config = keys.Rsa4096Pss, signature = None, owner = None, target = None, anchor = None, tags = [], data = None):
         self.sig_config = sig_config
         self.signature = signature
         self.owner = owner
@@ -79,6 +81,23 @@ class DataItem:
         self.signature = self.sig_config.sign(jwkjson, self.get_signature_data())
 
     def verify(self):
+        if len(self.tags) > 128:
+            return False
+        if len(self.anchor) > 32:
+            return False
+        for tag in self.tags:
+            if len(tag.keys()) > 2 or 'name' not in tag or 'value' not in tag:
+                return False
+            for key, value in tag.items():
+                if not isinstance(value, (bytes, bytearray)):
+                    value = str(value).encode()
+                    tag[key] = value
+                if len(value) == 0:
+                    return False
+            if len(tag['key']) > 1024:
+                return False
+            if len(tag['value']) > 3072:
+                return False
         return self.sig_config.verify(self.owner, self.get_signature_data(), self.signature)
 
     @property
