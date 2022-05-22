@@ -282,7 +282,7 @@ class Peer(HTTPClient):
         if as_hash_list:
             kwparams['headers'] = {'x-block-format': '2'}
         if from_height is not None or to_height is not None:
-            response = self._get('hash_list', from_height, to_height, **kwparams)
+            response = self._get('hash_list', str(from_height), str(to_height), **kwparams)
         else:
             response = self._get('hash_list', **kwparams)
         return response.json()
@@ -293,7 +293,7 @@ class Peer(HTTPClient):
         if as_hash_list:
             kwparams['headers'] = {'x-block-format': '2'}
         if from_height is not None or to_height is not None:
-            response = self._get('block_index', from_height, to_height, **kwparams)
+            response = self._get('block_index', str(from_height), str(to_height), **kwparams)
         else:
             response = self._get('block_index', **kwparams)
         return response.json()
@@ -400,9 +400,9 @@ class Peer(HTTPClient):
     def block_height(self, height, field = None):
         '''Return the JSON-encoded block or field of a block with the given height.'''
         if field is not None:
-            response = self._get('block/height', height, field)
+            response = self._get('block/height', str(height), field)
         else:
-            response = self._get('block/height', height)
+            response = self._get('block/height', str(height))
         return response.json()
 
     def block2_hash(self, hash, encoded_transaction_indices = None):
@@ -434,9 +434,9 @@ class Peer(HTTPClient):
         the block cache - the motivation is to keep the endpoint lightweight.
         '''
         if encoded_transaction_indices is not None:
-            response = self._post(encoded_transaction_indices, 'block2/height', height, method = 'GET')
+            response = self._post(encoded_transaction_indices, 'block2/height', str(height), method = 'GET')
         else:
-            response = self._get(encoded_transaction_indices, 'block2/height', height)
+            response = self._get(encoded_transaction_indices, 'block2/height', str(height))
         return response.content
 
     def block_current(self):
