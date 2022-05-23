@@ -13,7 +13,7 @@
 # PyArweave. If not, see <https://www.gnu.org/licenses/>.
 
 
-from ar import Wallet, DataItem, ANS104DataItemHeader
+from ar import Wallet, DataItem, ANS104DataItemHeader, Bundle
 import pytest
 
 import sys
@@ -86,7 +86,7 @@ def test_serialize_unsigned():
     assert dataitem.verify()
 
 def test_ans104_verification():
-    dataitem = DataItem.frombytes(
+    ans104_bytes = (
         b'\x01\x00\x89%\xb6\x8d\x95\xce\xc2dz\x8b;\x82\xbcw\xf7\x0b5\xce' +
         b'\x95\x94\xc4\xb3.m\xb3\xbfwM\xaf\xa08O\x8a\x12\x7f\xfa\x18\xcbU' +
         b'\xfa\xf4\xfc0.\x1dF*q\xc6\xb4\x96\xdb\x95\xf2\xfd)\x13L\xc2\xac' +
@@ -142,8 +142,82 @@ def test_ans104_verification():
         b'File-Hash\x80\x011bbc5db9f969c26aef492af5016a719e496e038fb1a2b51' +
         b'd11daf93b639908f2\x00x\x01+)JMU06`01\x00\x02\x05\xa3\xe4T\x86' +
         b'\xcco\x96\x1c\xc7\xbc\xe6O\xf6}\xdd\x93\x962%_\x90q\xb2\xb1\x12' +
-        b'\x00\xe5\xcb\x0c\xaf')
+        b'\x00\xe5\xcb\x0c\xaf'
+    )
+    dataitem = DataItem.frombytes(ans104_bytes)
     assert dataitem.verify()
+    assert dataitem.tobytes() == ans104_bytes
+
+def test_ans102_verification():
+    ans102_json = (
+        {
+            "items": [
+                {
+                    "owner": "wJ-mV2BK3Zs7Z-aHiZ1obA0oBXS9xeWtVNOme6pOJoNRiH8b4RDp71Z-KG1pzYaLRyy_aLxhSPrioJ3MACdGlcAkR1Uxz8gCC1Smswc3yWLcc9WP25W9jFJ7l7CLQ3cLL9PMqVikL25w3CMqo0fwEIdQBSaZr1R7x7tM-gXNmOffZEEVFZZBCzhMYMOAiVqGvxEOYG4jgOTL0tnPCptgoYY-XtF-egtUDCYGgq7J3DiOCj7pf6bcH1qBfkOwQNJdG1ZCmR9xrmUPAMQy6CzeyZ0DzYYyc-ZOytfNuAU-gGEtQanepZpGTw1jrd3HKmpmddYKbqpjYwG-wsSIIxn3B1Ui5jDC18R2JzxypQGrZj_fQ5jYy73OlYtxBrM50GQDEADbelHyngbGnbwvGkwN4FGfd-QsjAfGIkRBAllTXeToHsCXTJ-ReEZvHRWg9ZQolxU74QM3OjxwpKTtHIyKOJGEGfe6SaEdIysKeyZmvzYRtgrX2FVJIIzCJfaQG82NfxJF2mJBZf8_aI7SN92Z-EryoK8Fi9fsrua12haFLtuGDVwKsLv3vOkdNCITycAVaSo_j567sz-XF-BzJixnQn4wePlyqRZ82O7N9-yrIxYYttEliofYxTSU96r5qJzD_2N9XjdxNgOKtC48SXgaLnJlUD8xQpeaNOEGEH6Roq8",
+                    "target": "",
+                    "nonce": "",
+                    "tags": [
+                        {
+                            "name": "QXBwbGljYXRpb24",
+                            "value": "S1lWRSAtIERFVg"
+                        },
+                        {
+                            "name": "UG9vbA",
+                            "value": "OGNxMXdialdITmlQZzdHd1lwb0RUMm05SFg5OUxZN3RrbFJRV2ZoMUw2Yw"
+                        },
+                        {
+                            "name": "QmxvY2s",
+                            "value": "MHhjNDJlZjIyYjAzM2YwYzBlYzdjYTU2OWQ3NjE3OWFkNTdjNDZjOTkwYTczNDY3YzQyZDA4MTk0MWI2ODUxYTBj"
+                        },
+                        {
+                            "name": "SGVpZ2h0",
+                            "value": "MzAxMDUyOQ"
+                        },
+                        {
+                            "name": "VHJhbnNhY3Rpb24",
+                            "value": "MHgxZDJiMzYxNDFlMWVlNGUyNjBkNjc3Y2UxNDQxOTgyNDg1MDg2NGM3NjBiMzVkZTMxMzI0YWUxODgzZjg0NWY0"
+                        }
+                    ],
+                    "data": "eyJibG9ja0V4dHJhRGF0YSI6IjB4IiwiZGlmZmljdWx0eSI6IjEiLCJleHREYXRhSGFzaCI6IjB4NTZlODFmMTcxYmNjNTVhNmZmODM0NWU2OTJjMGY4NmU1YjQ4ZTAxYjk5NmNhZGMwMDE2MjJmYjVlMzYzYjQyMSIsImV4dHJhRGF0YSI6IjB4IiwiZ2FzTGltaXQiOjgwMDAwMDAsImdhc1VzZWQiOjIxMDAwLCJoYXNoIjoiMHhjNDJlZjIyYjAzM2YwYzBlYzdjYTU2OWQ3NjE3OWFkNTdjNDZjOTkwYTczNDY3YzQyZDA4MTk0MWI2ODUxYTBjIiwibG9nc0Jsb29tIjoiMHgwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMCIsIm1pbmVyIjoiMHgwMTAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwIiwibWl4SGFzaCI6IjB4MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMCIsIm5vbmNlIjoiMHgwMDAwMDAwMDAwMDAwMDAwIiwibnVtYmVyIjozMDEwNTI5LCJwYXJlbnRIYXNoIjoiMHg2MzJlODUwZGZmZWZmYzFhNjdlZmYzNTY5NjFlOWFiYjUyMWVlYjYzMWE5NTlmYmUzMWM4ZWViZGQxZmM2MmY3IiwicmVjZWlwdHNSb290IjoiMHgwNTZiMjNmYmJhNDgwNjk2YjY1ZmU1YTU5YjhmMjE0OGExMjk5MTAzYzRmNTdkZjgzOTIzM2FmMmNmNGNhMmQyIiwic2hhM1VuY2xlcyI6IjB4MWRjYzRkZThkZWM3NWQ3YWFiODViNTY3YjZjY2Q0MWFkMzEyNDUxYjk0OGE3NDEzZjBhMTQyZmQ0MGQ0OTM0NyIsInNpemUiOjY2NCwic3RhdGVSb290IjoiMHhiOWZjNWQxMjA2OGJjODQxNTgwZDU0MDIzZDdmYjE2YjhhMjNjN2NmNDRhZmVjZGE0MDU2MGQ4NTJlY2I4ZjBjIiwidGltZXN0YW1wIjoxNjI5MTM2NTY2LCJ0b3RhbERpZmZpY3VsdHkiOiIzMDEwNTI5IiwidHJhbnNhY3Rpb25zIjpbeyJibG9ja0hhc2giOiIweGM0MmVmMjJiMDMzZjBjMGVjN2NhNTY5ZDc2MTc5YWQ1N2M0NmM5OTBhNzM0NjdjNDJkMDgxOTQxYjY4NTFhMGMiLCJibG9ja051bWJlciI6MzAxMDUyOSwiZnJvbSI6IjB4MEQwNzA3OTYzOTUyZjJmQkE1OWREMDZmMmI0MjVhY2U0MGI0OTJGZSIsImdhcyI6NTAwMDAsImdhc1ByaWNlIjoiMjI1MDAwMDAwMDAwIiwiaGFzaCI6IjB4MWQyYjM2MTQxZTFlZTRlMjYwZDY3N2NlMTQ0MTk4MjQ4NTA4NjRjNzYwYjM1ZGUzMTMyNGFlMTg4M2Y4NDVmNCIsImlucHV0IjoiMHgiLCJub25jZSI6MjI3OSwidG8iOiIweDJCQzVEQzIxMEY2QUU0MDNkRTg5NUQwNjY1MDlERUZGRTkzMzUxODQiLCJ0cmFuc2FjdGlvbkluZGV4IjowLCJ2YWx1ZSI6IjE3NjE0NDAwMDAwMDAwMDAwMDAwIiwidHlwZSI6MCwidiI6IjB4MTUwZjciLCJyIjoiMHg5YWU3MTQ3ZjY4NGI0OTQ5MDQ1ODZhNWU1M2M1Njc4YTZkYTRkNDQyMDE1NGVmNWVhYzNiMGE5NjRiYjcxNjkwIiwicyI6IjB4NjlkOWY1YThhZTBlMTc4YzdhODg1N2I4Y2UyN2FmMTU0ZWVhMzc2Yzg5NDNmNzIyMTczMjU1NzQyOGQyZmVkNCJ9XSwidHJhbnNhY3Rpb25zUm9vdCI6IjB4ZTdkNDA5MGZlNTNmNTgwMjAyMzY0ZWUwOWFjYWUyOGViYWNmZjFiODlkMzY5ZGY1M2EyZTA1Y2NlZGZkYWJhNyIsInVuY2xlcyI6W119",
+                    "signature": "mfycPwDLJvhiKy0TzL70D109uvopnXQIf1tWlF4G6h6k1eLHWrQnRLLa2sN3pI9a4lCdIko1QxY-qlzbXx61w3wBynXD8Wpr1Kx6eCgTyF6jaUBHhXv1XBIz8kLtpm7HRpQT4Mg9bqHscsYext0mNMX-xTD81ZdAkJ7WSMh2_W5Av3o_5rxtJwjHdvgWXGZGd3jq3t6cfzjj4yo7mGoBQ_U3fHCrLXHLHuMJy6nsq-CvJhDgkfgBm2Cl69O6pvZd0FKGn-xGdDGxy_zf7b_HuQAmiZbKhiZMVRpfxNiY0TKDwo1xztuX4EJGy-_2wJB02zCijTtSGrJkjtOfK0xpb-SN00ly7hkcypUmQH0Mv6xBDn1LwbuFZ1g0jgEGVDQAd6QM3l7aPXx-ZxYffE8HHD3xXJX5L8vPDuZ14H_Kq_DjKR8UIYf9GqLQNw8qyFi8BSCDi_zbZzMvLBvEvPj9eJMZHVZ-4o_YzmpHvvOxLrpxuXQLbq8Vn6NQcV71iiD6hHomyz1QYCDWiOironlpZVMsMv1LNY_Zh-A-1pCq0tY6GoNt3vLevWCgKxLVPq2MuzUC47YkSR7TJVlTnnA1dfRmNDaIFd7FcNzsKvzYtaQqAfCdHEVq6kwCbMO6Z_U4lr0WVtUFpNIwljyZ__MRF_qYWSG8dwt9jPb3brIOHpM",
+                    "id": "EgrakUztxTUwDHkfRd57J6WikFpkr0cvXaF2X9ydQIY"
+                },
+                {
+                    "owner": "wJ-mV2BK3Zs7Z-aHiZ1obA0oBXS9xeWtVNOme6pOJoNRiH8b4RDp71Z-KG1pzYaLRyy_aLxhSPrioJ3MACdGlcAkR1Uxz8gCC1Smswc3yWLcc9WP25W9jFJ7l7CLQ3cLL9PMqVikL25w3CMqo0fwEIdQBSaZr1R7x7tM-gXNmOffZEEVFZZBCzhMYMOAiVqGvxEOYG4jgOTL0tnPCptgoYY-XtF-egtUDCYGgq7J3DiOCj7pf6bcH1qBfkOwQNJdG1ZCmR9xrmUPAMQy6CzeyZ0DzYYyc-ZOytfNuAU-gGEtQanepZpGTw1jrd3HKmpmddYKbqpjYwG-wsSIIxn3B1Ui5jDC18R2JzxypQGrZj_fQ5jYy73OlYtxBrM50GQDEADbelHyngbGnbwvGkwN4FGfd-QsjAfGIkRBAllTXeToHsCXTJ-ReEZvHRWg9ZQolxU74QM3OjxwpKTtHIyKOJGEGfe6SaEdIysKeyZmvzYRtgrX2FVJIIzCJfaQG82NfxJF2mJBZf8_aI7SN92Z-EryoK8Fi9fsrua12haFLtuGDVwKsLv3vOkdNCITycAVaSo_j567sz-XF-BzJixnQn4wePlyqRZ82O7N9-yrIxYYttEliofYxTSU96r5qJzD_2N9XjdxNgOKtC48SXgaLnJlUD8xQpeaNOEGEH6Roq8",
+                    "target": "",
+                    "nonce": "",
+                    "tags": [
+                        {
+                            "name": "QXBwbGljYXRpb24",
+                            "value": "S1lWRSAtIERFVg"
+                        },
+                        {
+                            "name": "UG9vbA",
+                            "value": "OGNxMXdialdITmlQZzdHd1lwb0RUMm05SFg5OUxZN3RrbFJRV2ZoMUw2Yw"
+                        },
+                        {
+                            "name": "QmxvY2s",
+                            "value": "MHg3ZWM3ZWE3OTM1NGYzZGEyYjdjNGY0MjRjYmQ2MGI5YjEyNTdhMzk5N2Q4ZWJlOGRlZGY2ODY0MDY5MGNiYmEz"
+                        },
+                        {
+                            "name": "SGVpZ2h0",
+                            "value": "MzAxMDUzMA"
+                        },
+                        {
+                            "name": "VHJhbnNhY3Rpb24",
+                            "value": "MHg4OTg1NmM0Y2RlNjQxYzAxM2I1ZTNjMjU0MTc2OGM4MThjM2JlNWFjNmE3MzBiMjFmZGJlZDZjMTEyYzI0ZTJl"
+                        }
+                    ],
+                    "data": "eyJibG9ja0V4dHJhRGF0YSI6IjB4IiwiZGlmZmljdWx0eSI6IjEiLCJleHREYXRhSGFzaCI6IjB4NTZlODFmMTcxYmNjNTVhNmZmODM0NWU2OTJjMGY4NmU1YjQ4ZTAxYjk5NmNhZGMwMDE2MjJmYjVlMzYzYjQyMSIsImV4dHJhRGF0YSI6IjB4IiwiZ2FzTGltaXQiOjgwMDAwMDAsImdhc1VzZWQiOjQ2NjIxLCJoYXNoIjoiMHg3ZWM3ZWE3OTM1NGYzZGEyYjdjNGY0MjRjYmQ2MGI5YjEyNTdhMzk5N2Q4ZWJlOGRlZGY2ODY0MDY5MGNiYmEzIiwibG9nc0Jsb29tIjoiMHgwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA0MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDIwMDAwMDAwMDAwMDAwMDAwMDAyMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAyMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA0MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDEwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAyMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwODAwMDAwMDAwMDAwMDAwMDAwMDAwMDA0MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDQwMDAwMDAwMDAwMDAwMDAwMDAxMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMjAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMCIsIm1pbmVyIjoiMHgwMTAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwIiwibWl4SGFzaCI6IjB4MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMCIsIm5vbmNlIjoiMHgwMDAwMDAwMDAwMDAwMDAwIiwibnVtYmVyIjozMDEwNTMwLCJwYXJlbnRIYXNoIjoiMHhjNDJlZjIyYjAzM2YwYzBlYzdjYTU2OWQ3NjE3OWFkNTdjNDZjOTkwYTczNDY3YzQyZDA4MTk0MWI2ODUxYTBjIiwicmVjZWlwdHNSb290IjoiMHhmNDAxMzlhZmNhZjkyOWM1MzczNGMzOWY1NzBlM2RmOGFjM2NjYzhkZGM3MTEwYWQyNzM5OWZmYTg5ZDJkNWYyIiwic2hhM1VuY2xlcyI6IjB4MWRjYzRkZThkZWM3NWQ3YWFiODViNTY3YjZjY2Q0MWFkMzEyNDUxYjk0OGE3NDEzZjBhMTQyZmQ0MGQ0OTM0NyIsInNpemUiOjcyNSwic3RhdGVSb290IjoiMHg1NmQwMjMyMWUyYjVkODVkMTlkNDUxMjcwODg2OGQ3NjliM2E2NTM3ZDc3ZmFlOGQ4ZTMzOTE2OGU3YjMxYTkwIiwidGltZXN0YW1wIjoxNjI5MTM2NTY5LCJ0b3RhbERpZmZpY3VsdHkiOiIzMDEwNTMwIiwidHJhbnNhY3Rpb25zIjpbeyJibG9ja0hhc2giOiIweDdlYzdlYTc5MzU0ZjNkYTJiN2M0ZjQyNGNiZDYwYjliMTI1N2EzOTk3ZDhlYmU4ZGVkZjY4NjQwNjkwY2JiYTMiLCJibG9ja051bWJlciI6MzAxMDUzMCwiZnJvbSI6IjB4MjVkNDhENzIyYzI2OTVkRjdhNTYyQjc5ODI3MjU1NDczQzA5ZjM5NCIsImdhcyI6NTEyODMsImdhc1ByaWNlIjoiMjI1MDAwMDAwMDAwIiwiaGFzaCI6IjB4ODk4NTZjNGNkZTY0MWMwMTNiNWUzYzI1NDE3NjhjODE4YzNiZTVhYzZhNzMwYjIxZmRiZWQ2YzExMmMyNGUyZSIsImlucHV0IjoiMHgwOTVlYTdiMzAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDllNGFhYmQyYjNlNjBlZTEzMjJlOTQzMDdkMDc3NmYyYzhlNmNmYmJmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmIiwibm9uY2UiOjM2OCwidG8iOiIweEUxQzExMEUxQjFiNEExZGVEMGNBZjNFNDJCZkJkYkI3YjVkN2NFMUMiLCJ0cmFuc2FjdGlvbkluZGV4IjowLCJ2YWx1ZSI6IjAiLCJ0eXBlIjowLCJ2IjoiMHgxNTBmOCIsInIiOiIweGRmNzRjYjdiZmMzMDQxNjQzMGFkMzVjY2YxOGIzM2U0MGQ4YjhhZWNkOTQyN2RhMjJmZDQ2ZjkzZDZhN2QzMmYiLCJzIjoiMHg1ZDgyYzU2ZjU5MjlmMDEyNDk2M2IzNTdjMjAyNzY4ZDQ0OTg1Y2QwNmVmMzQxNGJiMzMwMjY3MzVjZGIwNjMxIn1dLCJ0cmFuc2FjdGlvbnNSb290IjoiMHhjY2FkNWMyMjU2YjM5MjRmMGE5MmU4YzhjZWYyY2VmMWMyNTE5NDc3YjJhMmQ1YTQyNjQ3YzQ0ZWRmOGMwZWE5IiwidW5jbGVzIjpbXX0",
+                    "signature": "exypSzenwXcgjbaxArKobH2yKpjUhD2NbZ_9aJO2NhzlOgisJsycNx-xooLlPadQi-d8hqkVFbP1CZ_NMCkjerf-iBiKIyzk5gdXJP8S7oyzJuocSLHcqcWtTVfh_LKJDc9uNANSSBAahaj_D_K3V90xG_RYTQTVJVeO3cGjXL87ZdReXzon5nniYLhOwZUYSi9MT43UEnOQihLaJvSBGUrLq1clVpgY-okv-g1bGB2CsM-AvJRanXOsNuVZ7pengds6QJ7SfLo9KnrmQKqe-Rv7coy_Yqisg8BuQ6GR66vU_miKBXSuzM_froDtDfjBT44VV-5dElkply0j_GM9ts9dq6YWjq_pNXLe9v-o10YqIPuYfq4nblV_lb2muOdr2kypmQAKabxPwEGe8wRAM7G0aZ3MdAs7Rw1TcNh31BQd3wM_zKNp3RZEE2pEetgKDSCwmg8gc7SSdPOszOtWYUtDzLVINSlz9QTXXBfjMHxFfUB4UL689hlxOjMY7T9UGsSPrjErYpLA5fgeeI0g8CLsrLTFV94Ye78p9wOmemN0ohk0dkqgIGm7l1pN8KVz3IZI40YQmHGCrO5B2RJ7QnB2KmZ6WG95QMPiavsxMZXCNpzCJaPMCpSX66cFJHzFngybIgIdLZHdzlxeAtZJzxzE-2zY2tQUd9c__cwiJc8",
+                    "id": "MDEYtPsLIYzptwGG9-ZvZpg2ZtA8qztkIkPtSmKAj2I"
+                }
+            ]
+        }
+    )
+    bundle = Bundle.fromjson(ans102_json)
+    assert bundle.verify()
+    assert bundle.tojson() == ans102_json
 
 wallet = Wallet(jwk_data = {
     "kty": "RSA",
@@ -213,3 +287,4 @@ wallet = Wallet(jwk_data = {
 if __name__ == '__main__':
     test_serialize_unsigned()
     test_ans104_verification()
+    test_ans102_verification()
