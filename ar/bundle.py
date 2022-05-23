@@ -228,6 +228,7 @@ class ANS104DataItemHeader:
             owner = b64dec(json['owner']),
             target = json['target'],
             anchor = json['nonce'],
+            signature = json['signature'],
             signer = signer
         )
 
