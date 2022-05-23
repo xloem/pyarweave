@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 
 import datetime
-from ar import Peer, Wallet, Transaction, DataItem, ANS104DataItemHeader
+from ar import Peer, Wallet, DataItem
 from bundlr import Node
-from jose.utils import base64url_decode
 
 print('Generating a wallet ...')
 wallet = Wallet.generate()
@@ -21,4 +20,4 @@ current_block = peer.current_block()
 eta = current_block['timestamp'] + (result['block'] - current_block['height']) * 60 * 2
 eta = datetime.datetime.fromtimestamp(eta)
 
-print(f'https://arweave.net/{result["id"]} should be mined by {eta.isoformat()} block {result["block"]} or so, at the very latest.')
+print(f'{peer.api_url}/{result["id"]} should be mined by {eta.isoformat()} block {result["block"]} or so, at the very latest.')
