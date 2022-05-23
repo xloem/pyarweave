@@ -517,7 +517,7 @@ class Peer(HTTPClient):
 
     def height(self):
         '''Return the current block hieght.'''
-        response = self._get('{}/height')
+        response = self._get('height')
         return int(response.text)
 
     def data(self, txid, ext = ''):
