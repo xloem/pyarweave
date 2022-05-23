@@ -280,7 +280,7 @@ class ANS104DataItemHeader:
             anchor = stream.read(32)
             offset += 32
         else:
-            anchor = None
+            anchor = b''
 
         tags_len, raw_tags_len = struct.unpack('<QQ', stream.read(16))
         offset += 16
