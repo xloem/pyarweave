@@ -16,7 +16,7 @@ from setuptools import setup, find_packages
 
 setup(
   name='PyArweave',
-  version='0.3.3',
+  version='0.4.0',
   description='Tiny Arweave Library',
   long_description=open('README.md').read(),
   long_description_content_type='text/markdown',
@@ -29,10 +29,10 @@ setup(
   ],
   packages = find_packages(),
   install_requires=[ # try to reduce these
-    'arrow',
-    'python-jose', # for jwk parsing: note jwk is very simple
-    'pycryptodome',
-    'requests', # for network calls
-    'fastavro' # for bundlr tag serialization
+    'arrow', # used only in transaction_uploader.py for some timing thing
+    'python-jose', # for jwk parsing: note use of jwk is very simple, likely this is unneeded
+    'pycryptodome', # core crypto backend
+    'requests', # core network backend
+    'fastavro' # for ans104 tag serialization
   ],
 )
