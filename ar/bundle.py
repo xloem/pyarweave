@@ -3,6 +3,7 @@ import struct
 
 import fastavro
 from Crypto.Hash import SHA256
+from Crypto.Random import get_random_bytes
 
 from .utils import b64dec, b64enc, b64dec_if_not_bytes, b64enc_if_not_str, u256enc, u256dec, encode_tag, decode_tag, normalize_tag
 from .utils.deep_hash import deep_hash
@@ -91,6 +92,8 @@ class ANS104DataItemHeader:
         self.raw_owner = b64dec_if_not_bytes(owner)
         self.raw_signature = b64dec_if_not_bytes(signature)
         self.target = b64enc_if_not_str(target) if target else None
+        if anchor is None:
+            anchor = get_random_bytes(32)
         self.anchor = b64enc_if_not_str(anchor) if anchor else None
         self.signer = signer
 
@@ -300,8 +303,10 @@ class ANS104DataItemHeader:
         )
 
 class DataItem:
-    def __init__(self, header, data = b'', version = 2):
+    def __init__(self, header = None, data = b'', version = 2):
         self.data = data
+        if header is None:
+            header = ANS104DataItemHeader()
         self.header = header
         self.version = version
 
@@ -328,6 +333,7 @@ class DataItem:
         return deep_hash(items)
 
     def sign(self, private_key):
+        self.header.raw_owner = self.header.signer.raw_owner(private_key)
         self.header.raw_signature = self.header.signer.sign(private_key, self.get_raw_signature_data())
         return self.header.id
 
