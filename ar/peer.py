@@ -341,14 +341,14 @@ class Peer(HTTPClient):
         response = self._post(block_announcement, 'block_announcement')
         return response.json()
 
-    def block(self, block):
+    def send_block(self, block):
         '''Accept a JSON-encoded block with Base64Url encoded fields.'''
-        response = self._put(block, 'block')
+        response = self._post(block, 'block')
         return response.text # OK
 
-    def block2(self, block):
+    def send_block2(self, block):
         '''Accept a binary-encoded block.'''
-        response = self._put(block, 'block2')
+        response = self._post(block, 'block2')
         return response.text # OK
 
     def wallet(self, secret):
@@ -629,6 +629,20 @@ class Peer(HTTPClient):
         '''Deprecated for block_current() 12/07/2018'''
         response = self._get('current_block')
         return response.json()
+
+    def block(self, height_or_hash):
+        if type(height_or_hash) is int:
+            return self.block_height(height_or_hash)
+        elif not height_or_hash :
+            return self.block_current()
+        else:
+            return self.block_hash(height_or_hash)
+
+    def block2(self, height_or_hash):
+        if type(height_or_hash) is int:
+            return self.block2_height(height_or_hash)
+        else:
+            return self.block2_hash(height_or_hash)
 
     def tx_field(self, hash, field):
         '''
