@@ -600,7 +600,7 @@ class Peer(HTTPClient):
         if encoded_transaction_indices is not None:
             response = self._post(encoded_transaction_indices, 'block2/hash', hash, method = 'GET')
         else:
-            response = self._get(encoded_transaction_indices, 'block2/hash', hash)
+            response = self._get('block2/hash', hash)
         return response.content
 
     def block2_height(self, height, encoded_transaction_indices = None):
@@ -617,7 +617,7 @@ class Peer(HTTPClient):
         if encoded_transaction_indices is not None:
             response = self._post(encoded_transaction_indices, 'block2/height', str(height), method = 'GET')
         else:
-            response = self._get(encoded_transaction_indices, 'block2/height', str(height))
+            response = self._get('block2/height', str(height))
         return response.content
 
     def block_current(self):
