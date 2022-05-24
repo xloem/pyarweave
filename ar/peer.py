@@ -113,7 +113,11 @@ class Peer(HTTPClient):
     def unconfirmed_tx(self, txid):
         '''Return a possibly unconfirmed JSON-encoded transaction.'''
         response = self._get('unconfirmed_tx', txid)
-        return response.json()
+        tx = response.json()
+        for tag in tx['tags']:
+            for key in tag:
+                tag[key] = base64url_decode(tag[key].encode())
+        return tx
 
     def unconfirmed_tx2(self, txid):
         '''Return a possibly unconfirmed binary-encoded transaction.'''
