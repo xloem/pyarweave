@@ -35,11 +35,14 @@ class ANS104BundleHeader:
         return self.length_by_id(id)
 
     def get_offset(self, id):
+        return self.get_range(id)[0]
+
+    def get_range(self, id):
         total = self.get_len_bytes()
         id = b64enc_if_not_str(id)
         for other_id, length in self.length_by_id.items():
             if other_id == id:
-                return total
+                return total, total + length
             total += length
 
     def get_len_bytes(self):
