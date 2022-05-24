@@ -233,17 +233,3 @@ class Block:
         for tx in self.txs[::-1]:
             stream.write(arbinenc(b64dec(tx),                      24))
         return stream.getvalue()
-
-if __name__ == '__main__':
-    import ar
-    peer = ar.Peer()
-    height = peer.height()
-    blockbytes = peer.block2(height)
-    blockjson = peer.block(height)
-    blockfrombytes = Block.frombytes(blockbytes)
-    blockfromjson = Block.fromjson(blockjson)
-    assert blockfrombytes.tobytes() == blockbytes
-    assert blockfromjson.tobytes() == blockbytes
-    assert blockfrombytes.tojson() == blockjson
-    assert blockfromjson.tojson() == blockjson
-    
