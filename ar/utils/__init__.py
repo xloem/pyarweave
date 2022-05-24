@@ -19,6 +19,54 @@ from Crypto.Hash import SHA256
 from jose import jwk
 from jose.utils import base64url_encode, base64url_decode, base64
 
+def arbinenc(data, bits):
+    size_raw = erlintenc(len(data), bits)
+    return size_raw + data
+
+def arbindec(stream, bits):
+    size = erlintdec(stream, bits)
+    return stream.read(size)
+
+def arintenc(integer, bits):
+    int_raw = erlintenc(integer)
+    size_raw = erlintenc(len(int_raw), bits)
+    return size_raw + int_raw
+
+def arintdec(stream, bits):
+    size = erlintdec(stream, bits)
+    return erlintdec(stream, size * 8)
+
+def erlintenc(integer, bits = None):
+    if integer < 0:
+        raise NotImplementedError('negative integers not implemented yet')
+    if bits is None:
+        if integer == 0:
+            bits = 8
+        else:
+            bits = integer.bit_length()
+            bits -= bits % -8 # round up to 8 bits
+    else:
+        if integer >= (1 << bits):
+            raise OverflowError(integer, bits)
+    size = bits // 8
+    aligned_size = size - size % -8 # round up to 8 bytes
+    result = bytearray(aligned_size)
+    for qword in range(aligned_size-8,-8,-8):
+        struct.pack_into('>Q', result, qword, integer & 0xffffffffffffffff)
+        integer >>= 64
+    return result[-size:]
+
+def erlintdec(stream, bits):
+    integer = 0
+    size = bits // 8
+    data = stream.read(size)
+    aligned_size = size - size % -8 # round up to 8 bytes
+    data = data.rjust(aligned_size, b'\0')
+    for qword in range(0, size, 8):
+        integer = (integer << 64) | struct.unpack_from('>Q', data, qword)[0]
+    return integer
+
+
 def b64dec(data):
     return base64url_decode(utf8enc_if_not_bytes(data))
 
