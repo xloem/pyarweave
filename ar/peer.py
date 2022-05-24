@@ -21,7 +21,7 @@ class HTTPClient:
 
         response = self.session.request(**{'method': 'GET', 'url': url, 'timeout': self.timeout, **request_kwparams})
 
-        if response.status_code == 200:
+        if response.status_code >= 200 and response.status_code < 300:
             return response
         else:
             logger.error(response.text)
@@ -48,7 +48,7 @@ class HTTPClient:
 
         # logger.debug('{}\n\n{}'.format(response.text, data))
 
-        if response.status_code == 200:
+        if response.status_code >= 200 and response.status_code < 300:
             # logger.debug('RESPONSE 200: {}'.format(response.text))
             return response
         else:
@@ -524,7 +524,7 @@ class Peer(HTTPClient):
         response = self._get('height')
         return int(response.text)
 
-    def data(self, txid, ext = ''):
+    def data(self, txid, ext = '', range = None):
         '''
         Get the decoded data from a transaction.
 
@@ -534,9 +534,17 @@ class Peer(HTTPClient):
         The provided transaction ID is not valid or the field name is not valid: Invalid hash.
         A transaction with the given ID could not be found: Not Found.
         '''
-        response = self._get(txid + ext)
+        if range is not None:
+            headers = {'Range':f'bytes={range[0]}-{range[1]}'}
+        else:
+            headers = {}
+        response = self._get(txid + ext, headers = headers)
         return response.content
 
-    def stream(self, txid, ext = ''):
-        response = self._get(txid + ext, stream = True)
+    def stream(self, txid, ext = '', range = None):
+        if range is not None:
+            headers = {'Range':f'bytes={range[0]}-{range[1]}'}
+        else:
+            headers = {}
+        response = self._get(txid + ext, headers = headers, stream = True)
         return response_stream_to_file_object(response)
