@@ -43,7 +43,7 @@ class ANS104BundleHeader:
             total += length
 
     def get_len_bytes(self):
-        return 32 + len(self) * 64
+        return 32 + len(self.length_by_id) * 64
 
     def tobytes(self):
         return u256enc(len(self)) + b''.join((
@@ -88,7 +88,10 @@ class ANS104BundleHeader:
 
 class ANS104DataItemHeader:
     def __init__(self, tags = [], owner=None, target=None, anchor=None, signature=None, signer=DEFAULT_SIGNER):
-        self.tags = tags
+        if isinstance(tags, (bytes, bytearray)):
+            self.raw_tags = tags
+        else:
+            self.tags = tags
         self.raw_owner = b64dec_if_not_bytes(owner)
         self.raw_signature = b64dec_if_not_bytes(signature)
         self.target = b64enc_if_not_str(target) if target else None
@@ -159,12 +162,18 @@ class ANS104DataItemHeader:
         return b64enc(self.raw_id)
 
     @property
-    def raw_tags(self):
+    def tags(self):
+        stream = io.BytesIO(self.raw_tags)
+        return fastavro.schemaless_reader(stream, ANS104_TAGS_SCHEMA_fastavro)
+
+    @tags.setter
+    def tags(self, tags):
         stream = io.BytesIO()
         fastavro.schemaless_writer(stream, ANS104_TAGS_SCHEMA_fastavro, [
-            normalize_tag(tag) for tag in self.tags
+            normalize_tag(tag) for tag in tags
         ])
-        return stream.getvalue()
+        self.raw_tags = stream.getvalue()
+        
 
     def tojson(self):
         return {
@@ -286,21 +295,29 @@ class ANS104DataItemHeader:
         offset += 16
 
         if raw_tags_len > 0:
-            tags = fastavro.schemaless_reader(stream, ANS104_TAGS_SCHEMA_fastavro)
+            raw_tags = stream.read(raw_tags_len)
+            raw_tags_stream = io.BytesIO(raw_tags)
+            tags = fastavro.schemaless_reader(raw_tags_stream, ANS104_TAGS_SCHEMA_fastavro)
             offset += raw_tags_len
-            if stream.tell() - start_tell != offset or len(tags) != tags_len:
+            if raw_tags_stream.tell() != raw_tags_len or len(tags) != tags_len:
                 raise Exception(f'incorrect tags length')
         else:
-            tags = []
+            tags = b''
 
-        return cls(
-            tags = tags,
+        assert stream.tell() == offset + start_tell
+
+        result = cls(
+            tags = raw_tags,
             owner = raw_owner,
             target = target,
             anchor = anchor,
             signature = raw_signature,
             signer = signer
         )
+    
+        assert offset - raw_tags_len == result.get_len_bytes() - len(result.raw_tags)
+        assert offset == result.get_len_bytes()
+        return result
 
 class DataItem:
     def __init__(self, header = None, data = b'', version = 2):
@@ -367,17 +384,28 @@ class DataItem:
         return self.header.tobytes() + self.data
 
     @classmethod
+    def all_from_tags_stream(cls, tags, stream):
+        fmt = None
+        for tag in tags:
+            if tag['name'] == b'Bundle-Format':
+                fmt = tag['value']
+        print(fmt)
+        if fmt == b'json':
+            yield from Bundle.fromjson(json.load(stream)).dataitems
+        elif fmt == b'binary':
+            header = ANS104BundleHeader.fromstream(stream)
+            offset = header.get_len_bytes()
+            for length in header.length_by_id.values():
+                dataitem = cls.fromstream(stream, length=length)
+                offset += length
+                yield dataitem
+
+    @classmethod
     def fromjson(cls, json):
         return cls(header = ANS104DataItemHeader.fromjson(json), data = b64dec(json['data']), version = 1)
 
     @classmethod
     def frombytes(cls, data, length = None):
-        header = ANS104DataItemHeader.frombytes(data)
-        if length is None:
-            data = data[header.get_len_bytes():]
-        else:
-            data = data[header.get_len_bytes():length]
-        return cls(header = header, data = data, version = 2)
         stream = io.BytesIO(data)
         return cls.fromstream(stream, length = length)
 
