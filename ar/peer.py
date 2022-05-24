@@ -1,8 +1,7 @@
 import requests
-from jose.utils import base64url_decode
 
 from . import DEFAULT_API_URL, logger, ArweaveException
-from .utils import response_stream_to_file_object
+from .utils import response_stream_to_file_object, b64dec
 
 class HTTPClient:
     def __init__(self, api_url, timeout = None, retries = 5):
@@ -21,7 +20,7 @@ class HTTPClient:
 
         response = self.session.request(**{'method': 'GET', 'url': url, 'timeout': self.timeout, **request_kwparams})
 
-        if response.status_code >= 200 and response.status_code < 300:
+        if response.status_code >= 200 and response.status_code < 300 and int(response.headers.get('content-length', 1)) > 0:
             return response
         else:
             logger.error(response.text)
@@ -64,7 +63,22 @@ class Peer(HTTPClient):
         super().__init__(api_url, timeout, retries)
 
     def info(self):
-        '''Return network information from a given node.'''
+        '''
+        Get the current network information including
+        height, current block, and other properties.
+
+        {
+          "network": "arweave.N.1",
+          "version": 5,
+          "release": 43,
+          "height": 551511,
+          "current": "XIDpYbc3b5iuiqclSl_Hrx263Sd4zzmrNja1cvFlqNWUGuyymhhGZYI4WMsID1K3",
+          "blocks": 97375,
+          "peers": 64,
+          "queue_length": 0,
+          "node_state_latency": 18
+        }
+        '''
         response = self._get('info')
         return response.json()
 
@@ -102,7 +116,7 @@ class Peer(HTTPClient):
         tx = response.json()
         for tag in tx['tags']:
             for key in tag:
-                tag[key] = base64url_decode(tag[key].encode())
+                tag[key] = b64dec(tag[key].encode())
         return tx
 
     def tx2(self, txid):
@@ -116,7 +130,7 @@ class Peer(HTTPClient):
         tx = response.json()
         for tag in tx['tags']:
             for key in tag:
-                tag[key] = base64url_decode(tag[key].encode())
+                tag[key] = b64dec(tag[key].encode())
         return tx
 
     def unconfirmed_tx2(self, txid):
@@ -189,25 +203,79 @@ class Peer(HTTPClient):
             response = self._get('data_sync_record', encoded_start, encoded_limit)
         return response.content
 
-    def chunk(self, offset):
-        response = self._get('chunk', offset)
-        return response.json()
+    def chunk(self, offset, packing = 'unpacked', bucket_based_offset = False):
+        '''
 
-    def chunk2(self, offset):
-        response = self._get('chunk2', offset)
+        {packing} := { 'unpacked' | 'spora_2_5' | 'any' }
+
+        {
+            "tx_path",
+            "packing",
+            "data_path",
+            "chunk"
+        }
+        '''
+
+        headers = {
+            'x-packing': packing
+        }
+        if bucket_based_offset:
+            headers['x-bucket-based-offset'] = '1'
+
+        response = self._get('chunk', str(offset), headers=headers)
+        result = response.json()
+        for key in ('tx_path', 'data_path', 'chunk'):
+            result[key] = b64dec(result[key])
+        return result
+
+    def chunk2(self, offset, packing = 'unpacked', bucket_based_offset = False):
+        '''
+
+        {packing} := { 'unpacked' | 'spora_2_5' | 'any' }
+
+        Returns: b[
+            chunk_size      3 bytes, big-endian
+            chunk           chunk_size bytes
+
+            txpath_size     3 bytes, big-endian
+            txpath          txpath_size bytes
+
+            datapath_size   3 bytes, big-endian
+            datapath        datapath_size bytes
+
+            packing2_size   1 byte
+            packing2        packing2_size bytes
+        ]
+        '''
+
+        headers = {
+            'x-packing': packing
+        }
+        if bucket_based_offset:
+            headers['x-bucket-based-offset'] = '1'
+
+        response = self._get('chunk2', str(offset), headers=headers)
         return response.content
 
     def tx_offset(self, hash):
         '''
-        Return transaction offset and size.
+        Get the absolute end offset and size of the transaction
+
+        The client may use this information to collect transaction chunks. Start with
+        the end offset and fetch a chunk via chunk(<offset>). Subtract its size
+        from the transaction size - if there are more chunks to fetch, subtract the
+        size of the chunk from the offset and fetch the next chunk.
 
         {
-            "offset": "<Offset>",
-            "size": "<Size>"
+            "offset": <Offset>,
+            "size": <Size>
         }
         '''
         response = self._get('tx', hash, 'offset')
-        return response.json()
+        result = response.json()
+        result['offset'] = int(result['offset'])
+        result['size'] = int(result['size'])
+        return result
 
     def send_chunk(self, json_data):
         '''
@@ -259,18 +327,24 @@ class Peer(HTTPClient):
         return response.json()
 
     def send_tx(self, json_data):
-        '''Accept a new JSON-encoded transaction.'''
+        '''
+        Submit a new transaction to the network.
+
+        The object should have the attributes described in:
+        https://docs.arweave.org/developers/server/http-api#transaction-format
+        '''
         response = self._post(json_data, 'tx')
         return response.text # OK
 
     def send_tx2(self, binary_data):
-        '''Accept a new binary-encoded transaction.'''
+        '''Submit a new binary-encoded transaction to the network.'''
         response = self._post(binary_data, 'tx2')
         return response.text # OK
 
     def unsigned_tx(self, secret):
         '''
         Sign and send a tx to the network.
+
         Fetches the wallet by the provided key generated via wallet().
         Requires internal_api_secret startup option to be set.
         WARNING: only use it if you really really know what you are doing.
@@ -279,16 +353,36 @@ class Peer(HTTPClient):
         return response.json()
 
     def peers(self):
-        '''Return the list of peers held by the node.'''
+        '''
+        Get the list of peers from the node.
+
+        Nodes can only respond with peers they currently know about, so
+        this will not be an exhaustive or complete list of nodes on the network.
+        '''
         response = self._get('peers')
         return response.json()
 
-    def price(self, data_size=0, target_address=None):
-        '''Return the estimated transaction fee not including a new wallet fee.'''
+    def price(self, bytes=0, target_address=None):
+        '''Return the estimated transaction fee not including a new wallet fee.
+
+        This endpoint is used to calculate the minimum fee (reward) for a transaction
+        of a specific size, and possibly to a specific address.This endpoint should
+        always be used to calculate transaction fees as closely to the submission time
+        as possible. Pricing is dynamic and determined by the network, so it's not
+        always possible to accurately calculate prices offline or ahead of
+        time.Transactions with a fee that's too low will simply be rejected.
+
+        bytes:
+            The number of bytes to go into the transaction data field.
+            If sending AR to another wallet with no data attached, then 0 should be used.
+
+        target:
+            The target wallet address if sending AR to another wallet.
+        '''
         if target_address is not None:
-            response = self._get('price', str(data_size), target_address)
+            response = self._get('price', str(bytes), target_address)
         else:
-            response = self._get('price', str(data_size))
+            response = self._get('price', str(bytes))
         return response.text
 
     def hash_list(self, from_height = None, to_height = None, as_hash_list = True):
@@ -368,14 +462,17 @@ class Peer(HTTPClient):
         return response.text # OK
 
     def wallet_balance(self, wallet_address):
-        '''Return the balance of the wallet specified via wallet_address.'''
+        '''
+        Return the balance of the wallet specified via wallet_address.
+        Unknown wallet addresses will simply return 0.
+        '''
         response = self._get('wallet', wallet_address, 'balance')
         return int(response.text)
 
     def wallet_last_tx(self, wallet_address):
         '''
-        Return the last transaction ID (hash) for the wallet specified via wallet_address.
-        GET request to endpoint /wallet/{wallet_address}/last_tx.
+        Return the last outgoing transaction ID (hash) for the wallet
+        specified via wallet_address.
         '''
         response = self._get('wallet', wallet_address, 'last_tx')
         return response.text
@@ -408,7 +505,34 @@ class Peer(HTTPClient):
         return response.json()
 
     def block_hash(self, hash, field = None):
-        '''Return the JSON-encoded block or field of a block with the given hash.'''
+        '''
+        Return the JSON-encoded block or field of a block with the given hash.
+
+        {
+            "nonce",
+            "previous_block",
+            "timestamp",
+            "last_retarget",
+            "diff",
+            "height",
+            "hash","indep_hash","txs":[],
+            "tx_root",
+            "tx_tree":[],
+            "wallet_list","reward_addr",
+            "tags":[],
+            "reward_pool",
+            "weave_size",
+            "block_size",
+            "cumulative_diff",
+            "hash_list_merkle",
+            "poa": {
+                "option",
+                "tx_path",
+                "data_path",
+                "chunk"
+            }
+        }
+        '''
         if field is not None:
             response = self._get('block/hash', hash, field)
         else:
@@ -471,17 +595,24 @@ class Peer(HTTPClient):
         '''
         Return a given field of the transaction specified by the transaction ID (hash).
         
-        {field} := { 'id' | 'last_tx' | 'owner' | 'tags' | 'target' | 'quantity' | 'data' | 'signature' | 'reward' }
+        {field} := { 
+            'id' | 'last_tx' | 'owner' | 'tags' | 'target' | 'quantity' |
+            'data_root' | 'data_size' | 'data' | 'reward' | 'signature'
+        }
         '''
-        response = self._get('tx', hash, field)
-        if field == 'tags':
-            tags = response.json()
-            for tag in tags:
-                for key in tag:
-                    tag[key] = base64url_decode(tag[key].encode())
-            return tags
+        if field == 'data':
+            response = self._get('tx', hash, 'data.')
+            return response.content
         else:
-            return response.json()
+            response = self._get('tx', hash, field)
+            if field == 'tags':
+                tags = response.json()
+                for tag in tags:
+                    for key in tag:
+                        tag[key] = b64dec(tag[key].encode())
+                return tags
+            else:
+                return response.json()
 
     def tx_id(self, hash):
         '''Return transaction id.'''
@@ -507,8 +638,20 @@ class Peer(HTTPClient):
         '''Return transaction quantity.'''
         return self.tx_field(hash, 'quantity')
 
+    def tx_data_root(self, hash):
+        '''Return transaction data root.'''
+        return self.tx_field(hash, 'data_root')
+
+    def tx_data_size(self, hash):
+        '''Return transaction data size.'''
+        return self.tx_field(hash, 'data_size')
+
     def tx_data(self, hash):
-        '''Return transaction data.'''
+        '''
+        Return transaction data.
+
+        The endpoint serves data regardless of how it was uploaded.
+        '''
         return self.tx_field(hash, 'data')
 
     def tx_signature(self, hash):
@@ -528,7 +671,9 @@ class Peer(HTTPClient):
         '''
         Get the decoded data from a transaction.
 
-        TODO: content type may impact something here. in erlang it looks like this forwards to {}/tx/data .
+        This is roughly just an alias for tx_data_html.
+
+        NOTE: ranges don't work on most peers. chunks are the way to get partial data.
 
         The transaction is pending: Pending
         The provided transaction ID is not valid or the field name is not valid: Invalid hash.
