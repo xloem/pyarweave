@@ -32,13 +32,13 @@ class Block:
         self.packing_threshold = packing_threshold
         self.strict_chunk_threshold = strict_chunk_threshold
 
-        if type(usd_to_ar_rate) is not tuple:
+        if not isinstance(usd_to_ar_rate, (tuple, list)):
             usd_to_ar_rate = fractions.Fraction(usd_to_ar_rate)
             self.usd_to_ar_rate_raw = (usd_to_ar_rate.numerator, usd_to_ar_rate.denominator)
         else:
             self.usd_to_ar_rate_raw = usd_to_ar_rate
 
-        if type(scheduled_usd_to_ar_rate) is not tuple:
+        if not isinstance(scheduled_usd_to_ar_rate, (tuple, list)):
             scheduled_usd_to_ar_rate = fractions.Fraction(scheduled_usd_to_ar_rate)
             self.scheduled_usd_to_ar_rate_raw = (
                 scheduled_usd_to_ar_rate.numerator, scheduled_usd_to_ar_rate.denominator
@@ -60,6 +60,8 @@ class Block:
     def __getattr__(self, attr):
         if attr.endswith('_raw'):
             return b64dec(getattr(self, attr[:-4]))
+        else:
+            return setup().__getattr__(attr)
 
     @property
     def usd_to_ar_rate(self):
@@ -74,6 +76,35 @@ class Block:
             return fractions.Fraction(*self.sceduled_usd_to_ar_rate_raw)
         except ZeroDivisionError:
             return None
+
+    @classmethod
+    def fromjson(cls, data):
+        kwparams = {**data}
+
+        # pull out poa keys for now
+        kwparams.update({
+            'poa_' + key : value
+            for key, value in kwparams.pop('poa').items()
+        })
+
+        # convert integer strings to integers
+        for param in ('usd_to_ar_rate', 'scheduled_usd_to_ar_rate'):
+            kwparams[param] = [int(amount) for amount in kwparams[param]]
+            kwparams[param] = [int(amount) for amount in kwparams[param]]
+        for param in (
+            'packing_2_5_threshold', 'strict_data_split_threshold',
+            'timestamp', 'last_retarget', 'diff', 'reward_pool',
+            'weave_size' , 'block_size', 'cumulative_diff',
+            'poa_option'
+        ):
+            kwparams[param] = int(kwparams[param])
+
+        # rename
+        kwparams['packing_threshold'] = kwparams.pop('packing_2_5_threshold')
+        kwparams['strict_chunk_threshold'] = kwparams.pop('strict_data_split_threshold')
+        kwparams['prev_block'] = kwparams.pop('previous_block')
+
+        return cls(**kwparams)
 
     @classmethod
     def frombytes(cls, bytes):
@@ -135,6 +166,38 @@ class Block:
                    poa_data_path = poa_data_path_raw,
                    tags = tags, txs = txs)
 
+    def tojson(self):
+        return {
+            'usd_to_ar_rate': [str(value) for value in self.usd_to_ar_rate_raw],
+            'scheduled_usd_to_ar_rate': [str(value) for value in self.scheduled_usd_to_ar_rate_raw],
+            'packing_2_5_threshold': str(self.packing_threshold),
+            'strict_data_split_threshold': str(self.strict_chunk_threshold),
+            'nonce': self.nonce,
+            'previous_block': self.prev_block,
+            'timestamp': self.timestamp,
+            'last_retarget': self.last_retarget,
+            'diff': str(self.diff),
+            'height': self.height,
+            'hash': self.hash,
+            'indep_hash': self.indep_hash,
+            'txs': self.txs,
+            'tx_root': self.tx_root,
+            'wallet_list': self.wallet_list,
+            'reward_addr': self.reward_addr,
+            'tags': self.tags,
+            'reward_pool': str(self.reward_pool),
+            'weave_size': str(self.weave_size),
+            'block_size': str(self.block_size),
+            'cumulative_diff': str(self.cumulative_diff),
+            'hash_list_merkle': self.hash_list_merkle,
+            'poa': {
+                'option': str(self.poa_option),
+                'tx_path': self.poa_tx_path,
+                'data_path': self.poa_data_path,
+                'chunk': self.poa_chunk
+            }
+        }
+
     def tobytes(self):
         stream = io.BytesIO()
         stream.write(self.indep_hash_raw)
@@ -174,8 +237,13 @@ class Block:
 if __name__ == '__main__':
     import ar
     peer = ar.Peer()
-    height = 940318#peer.height()
+    height = peer.height()
     blockbytes = peer.block2(height)
-    block = Block.frombytes(blockbytes)
-    assert block.tobytes() == blockbytes
+    blockjson = peer.block(height)
+    blockfrombytes = Block.frombytes(blockbytes)
+    blockfromjson = Block.fromjson(blockjson)
+    assert blockfrombytes.tobytes() == blockbytes
+    assert blockfromjson.tobytes() == blockbytes
+    assert blockfrombytes.tojson() == blockjson
+    assert blockfromjson.tojson() == blockjson
     
