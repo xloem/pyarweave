@@ -195,8 +195,13 @@ class Peer(HTTPClient):
         return response.content
 
     def sync_buckets(self):
+        '''
+        Return a compact but imprecise representation of the synced data -
+        a bucket size and a map where every key is the sequence number of the bucket,
+        every value - the percentage of data synced in the reported bucket.
+        '''
         response = self._get('sync_buckets')
-        return response.content
+        return erlang.binary_to_term(response.content)
 
     def data_sync_record(self, start = None, limit = None, format = 'etf'):
         '''
