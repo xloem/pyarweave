@@ -14,7 +14,13 @@
 
 import logging
 
-DEFAULT_API_URL = 'https://arweave.net'
+PUBLIC_GATEWAYS = [
+    'https://arweave.net',
+    'https://arweave.live',
+    'https://arweave-dev.everpay.io'
+]
+
+DEFAULT_API_URL = PUBLIC_GATEWAYS[0]
 
 logger = logging.getLogger(__name__)
 
