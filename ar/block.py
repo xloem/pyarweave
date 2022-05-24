@@ -164,12 +164,10 @@ class Block:
         stream.write(arbinenc(self.poa_tx_path_raw,                24))
         stream.write(arbinenc(self.poa_data_path_raw,              24))
         stream.write(erlintenc(len(self.tags), 16))
-        import pdb; pdb.set_trace()
-        # encoding issues appeart to start on or after here
         for tag in self.tags:
             stream.write(arbinenc(tag,                             16))
         stream.write(erlintenc(len(self.txs), 16))
-        for tx in self.txs:
+        for tx in self.txs[::-1]:
             stream.write(arbinenc(b64dec(tx),                      24))
         return stream.getvalue()
 
