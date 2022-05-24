@@ -9,6 +9,7 @@ class BundleWatcher:
     def run(self):
         mark = time.time()
         height = self.peer.height()
+        missing_txs = set()
         old_pending_txs = set()
         old_block_txs = set(self.peer.block_height(height)['txs'])
         while True:
@@ -21,7 +22,7 @@ class BundleWatcher:
             else:
                 new_block_txs = old_block_txs
                 
-            for txid in new_block_txs.difference(old_block_txs).union(new_pending_txs).difference(old_pending_txs):
+            for txid in new_block_txs.difference(old_block_txs).union(new_pending_txs).difference(old_pending_txs).union(missing_txs):
                 #txid = 'vPwbFzEYlE8Bti7phVRt0ZMPtNG65FfBYM8RwHdS6tY'
                 tags = self.peer.unconfirmed_tx(txid)['tags']
                 print(txid, tags)
@@ -29,9 +30,9 @@ class BundleWatcher:
                     try:
                         stream = self.peer.stream(txid)
                     except ArweaveException:
-                        new_pending_txs.discard(txid)
-                        new_block_txs.discard(txid)
+                        missing_txs.add(txid)
                         continue
+                    missing_txs.discard(txid)
                     with stream:
                         #header = ANS104Header.from_tags_stream(tags, stream)
                         #header.data = lambda: Bundle.from_tags_stream(tags, stream)# get individual item
