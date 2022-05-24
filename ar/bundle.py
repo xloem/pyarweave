@@ -5,7 +5,7 @@ import fastavro
 from Crypto.Hash import SHA256
 from Crypto.Random import get_random_bytes
 
-from .utils import b64dec, b64enc, b64dec_if_not_bytes, b64enc_if_not_str, u256enc, u256dec, encode_tag, decode_tag, normalize_tag
+from .utils import b64dec, b64enc, b64dec_if_not_bytes, b64enc_if_not_str, le_u256enc, le_u256dec, encode_tag, decode_tag, normalize_tag
 from .utils.deep_hash import deep_hash
 from .utils.ans104_signers import DEFAULT as DEFAULT_SIGNER, BY_TYPE as SIGNERS_BY_TYPE
 
@@ -49,8 +49,8 @@ class ANS104BundleHeader:
         return 32 + len(self.length_by_id) * 64
 
     def tobytes(self):
-        return u256enc(len(self)) + b''.join((
-            u256enc(length) + b64dec(id)
+        return le_u256enc(len(self)) + b''.join((
+            le_u256enc(length) + b64dec(id)
             for id, length in self.length_by_id.items()
         ))
 
@@ -77,10 +77,10 @@ class ANS104BundleHeader:
 
     @classmethod
     def fromstream(cls, stream):
-        entryct = u256dec(stream.read(32))
+        entryct = le_u256dec(stream.read(32))
 
         length_id_pairs = (
-            (u256dec(stream.read(32)), b64enc(stream.read(32)))
+            (le_u256dec(stream.read(32)), b64enc(stream.read(32)))
             for idx in range(entryct)
         )
 

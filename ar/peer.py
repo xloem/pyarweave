@@ -1,7 +1,9 @@
+import erlang
 import requests
+import json
 
 from . import DEFAULT_API_URL, logger, ArweaveException
-from .utils import response_stream_to_file_object, b64dec
+from .utils import response_stream_to_file_object, b64dec, be_u256dec
 
 class HTTPClient:
     def __init__(self, api_url, timeout = None, retries = 5):
@@ -196,12 +198,44 @@ class Peer(HTTPClient):
         response = self._get('sync_buckets')
         return response.content
 
-    def data_sync_record(self, encoded_start = None, encoded_limit = None):
-        if encoded_start is None and encoded_limit is None:
-            response = self._get('data_sync_record')
+    def data_sync_record(self, start = None, limit = None, format = 'etf'):
+        '''
+        Return a high-to-low list of intervals of synced data ranges.
+
+        start: pick intervals with higher bound >= start
+        limit: the number of intervals to pick
+        format: 'json' or 'etf', serialize in JSON or Erlang Term Format
+        '''
+        if format == 'json':
+            headers = {'content-type':'application/json'}
         else:
-            response = self._get('data_sync_record', encoded_start, encoded_limit)
-        return response.content
+            headers = {}
+        if start is None and limit is None:
+            response = self._get('data_sync_record', headers=headers)
+        else:
+            if start is None:
+                start = -1
+            if limit is None:
+                limit = -1
+            response = self._get('data_sync_record', str(start), str(limit), headers=headers)
+        if format == 'json':
+            try:
+                intervals = response.json()
+                intervals = [
+                    (int(key), int(value))
+                    for interval in intervals
+                    for key, value in interval.items()
+                ]
+                return intervals
+            except json.decoder.JSONDecodeError:
+                # some proxies, such as arweave.net 2022-05, ignore the header and return etf
+                pass
+        intervals = erlang.binary_to_term(response.content)
+        intervals = [
+            (be_u256dec(left.value), be_u256dec(right.value))
+            for left, right in intervals
+        ]
+        return intervals
 
     def chunk(self, offset, packing = 'unpacked', bucket_based_offset = False):
         '''
@@ -673,8 +707,6 @@ class Peer(HTTPClient):
 
         This is roughly just an alias for tx_data_html.
 
-        NOTE: ranges don't work on most peers. chunks are the way to get partial data.
-
         The transaction is pending: Pending
         The provided transaction ID is not valid or the field name is not valid: Invalid hash.
         A transaction with the given ID could not be found: Not Found.
@@ -684,6 +716,7 @@ class Peer(HTTPClient):
         else:
             headers = {}
         response = self._get(txid + ext, headers = headers)
+
         return response.content
 
     def stream(self, txid, ext = '', range = None):

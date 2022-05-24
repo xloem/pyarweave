@@ -33,6 +33,7 @@ setup(
     'python-jose', # for jwk parsing: note use of jwk is very simple, likely this is unneeded
     'pycryptodome', # core crypto backend
     'requests', # core network backend
-    'fastavro' # for ans104 tag serialization
+    'fastavro', # for ans104 tag serialization
+    'erlang_py', # for decoding some rare binary peer data
   ],
 )

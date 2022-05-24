@@ -57,17 +57,30 @@ def utf8dec_if_bytes(data):
     else:
         return data
 
-def u256dec(data):
+def le_u256dec(data):
     qword1, qword2, qword3, qword4 = struct.unpack('<4Q', data)
     return qword1 | (qword2 << 64) | (qword3 << 128) | (qword4 << 192)
 
-def u256enc(value):
+def le_u256enc(valu):
     return struct.pack(
         '<4Q',
         value & 0xffffffffffffffff,
         (value >> 64) & 0xffffffffffffffff,
         (value >> 128) & 0xffffffffffffffff,
         (value >> 192) & 0xffffffffffffffff
+    )
+
+def be_u256dec(data):
+    qword4, qword3, qword2, qword1 = struct.unpack('>4Q', data)
+    return qword1 | (qword2 << 64) | (qword3 << 128) | (qword4 << 192)
+
+def be_u256enc(valu):
+    return struct.pack(
+        '>4Q',
+        (value >> 192) & 0xffffffffffffffff,
+        (value >> 128) & 0xffffffffffffffff,
+        (value >> 64) & 0xffffffffffffffff,
+        value & 0xffffffffffffffff
     )
 
 def create_tag(name, value, v2):
