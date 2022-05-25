@@ -24,10 +24,11 @@ class HTTPClient:
 
         try:
             response.raise_for_status()
-            if int(response.headers.get('content-length', 1)) > 0:
-                return response
-            else:
+            if int(response.headers.get('content-length', 1)) == 0:
                 raise ArweaveException('Empty response.')
+            if response.status_code not in (200, 206):
+                raise ArweaveException(response.text)
+            return response
         except requests.exceptions.RequestException as exc:
             logger.error(response.text)
             raise ArweaveNetworkException(response.text, exc, response)
@@ -101,6 +102,28 @@ class Peer(HTTPClient):
             if sync_record_1 == sync_record_2:
                 raise ArweaveNetworkException()
 
+        def partial_data():
+            for height in range(self.height(), 0, -1):
+                tx = self.block_height(height)['txs'][0]
+                try:
+                    stream = self.stream(tx, range = (0,4))
+                    data = stream.read(8)
+                    if len(data) == 8:
+                        partial_data = False
+                    else:
+                        stream = self.stream(tx)
+                        data = stream.read(8)
+                        if len(data) == 8:
+                            partial_data = True
+                        else:
+                            continue
+                    break
+                except ArweaveException as exc:
+                    print(tx, exc)
+                    continue
+            if not partial_data:
+                raise ArweaveNetworkException()
+
         def peers():
             health = status.get('health')
             if health is not None:
@@ -119,6 +142,9 @@ class Peer(HTTPClient):
             load_balancing_proxy = dict(
                 probe = load_balancing_proxy,
                 exclude = ['info', 'sync_buckets']
+            ),
+            partial_data = dict(
+                probe = partial_data,
             ),
             cache_jobs = dict(
                 system = 'arseeding',
@@ -141,12 +167,14 @@ class Peer(HTTPClient):
         for probe, options in probes.items():
             if probe in exclude:
                 continue
+            logger.info(f'{probe} ...')
             try:
                 params = options.get('params',[])
                 func = options.get('probe')
                 if func is None:
                     func = getattr(self, probe)
                 reply = func(*options.get('params',[]))
+                logger.info(f'{self.api_url} has {probe}')
                 if len(params) == 0 and reply is not None:
                     status[options.get('status',probe)] = reply
                 exclude.update(options.get('exclude',[]))
@@ -155,6 +183,7 @@ class Peer(HTTPClient):
                 if system is not None and system not in systems:
                     systems.append(system)
             except ArweaveNetworkException:
+                logger.info(f'{self.api_url} does not have {probe}')
                 continue
  
         return {
@@ -828,7 +857,23 @@ class Peer(HTTPClient):
         return response.json()
 
     def health(self):
-        '''Returns information on the connected peers and database.'''
+        '''
+        Returns information on the connected peers and database.
+        
+        {
+            "region": "<AWS_REGION>",
+            "origins": [
+                {
+                    "endpoint": "<api_url>",
+                    "status": <http status code>, 
+                    "info": peer.info()
+                }
+            ],
+            "database": {
+                "block": { "id", "height", "mined_at", "previous_block", "txs", "extended" }
+            }
+        }
+        '''
         response = self._get('health')
         return response.json()
         
