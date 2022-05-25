@@ -745,3 +745,55 @@ class Peer(HTTPClient):
             headers = {}
         response = self._get(txid + ext, headers = headers, stream = True)
         return response_stream_to_file_object(response)
+
+    # below are used with https://github.com/everFinance/arseeding
+
+    def send_job_broadcast(self, txid):
+        '''Register a tx to be broadcast to all nodes.'''
+        response = self._get('job', 'broadcast', txid, method='POST')
+        return response.text
+
+    def send_job_sync(self, txid):
+        response = self._get('job', 'sync', txid, method='POST')
+        return response.text
+
+    def job_kill(self, txid, type):
+        '''Close a running job.'''
+        response = self._get('job', 'kill', txid, type, method='POST')
+        return response.text
+
+    def job_kill_broadcast(self, txid):
+        '''Close a broadcast job.'''
+        return self.job_kill(txid, 'broadcast')
+
+    def job_kill_sync(self, txid):
+        '''Close a sync job.'''
+        return self.job_kill(txid, 'sync')
+
+    def job(self, txid, type):
+        '''Get the status of a job.'''
+        response = self._get('job', txid, type)
+        return response.json()
+
+    def job_broadcast(self, txid):
+        '''Get the status of a broadcast job.
+
+        {
+            "arid": "<txid>",
+            "jobType": "broadcast",
+            "countSuccessed": <nodes successfully broadcast>,
+            "countFailed": <nodes failed to broadcast>,
+            "totalNodes": <total number of nodes>,
+            "close": <whether task is closed>
+        }
+        '''
+        return self.job(txid, 'broadcast')
+
+    def job_sync(self, txid):
+        '''Get the status of a sync job.
+        '''
+        return self.job(txid, 'sync')
+
+    def cache_jobs(self):
+        response = self._get('cache', 'jobs')
+        return response.json()
