@@ -27,6 +27,9 @@ logger = logging.getLogger(__name__)
 class ArweaveException(Exception):
     pass
 
+class ArweaveNetworkException(ArweaveException):
+    pass
+
 __all__ = [
     'Peer', 'Wallet', 'Transaction', 'Block',
     'Bundle', 'DataItem', 'ANS104BundleHeader', 'ANS104DataItemHeader',

@@ -2,7 +2,7 @@ import erlang
 import requests
 import json
 
-from . import DEFAULT_API_URL, logger, ArweaveException
+from . import DEFAULT_API_URL, logger, ArweaveException, ArweaveNetworkException
 from .utils import response_stream_to_file_object, b64dec, be_u256dec
 
 class HTTPClient:
@@ -22,11 +22,15 @@ class HTTPClient:
 
         response = self.session.request(**{'method': 'GET', 'url': url, 'timeout': self.timeout, **request_kwparams})
 
-        if response.status_code >= 200 and response.status_code < 300 and int(response.headers.get('content-length', 1)) > 0:
-            return response
-        else:
+        try:
+            response.raise_for_status()
+            if int(response.headers.get('content-length', 1)) > 0:
+                return response
+            else:
+                raise ArweaveException('Empty response.')
+        except requests.exceptions.RequestException as exc:
             logger.error(response.text)
-            raise ArweaveException(response.text)
+            raise ArweaveNetworkException(response.text, exc, response)
 
     def _post(self, data, *params, headers = {}, **request_kwparams):
         if len(params) and params[-1][0] == '?':
@@ -49,12 +53,13 @@ class HTTPClient:
 
         # logger.debug('{}\n\n{}'.format(response.text, data))
 
-        if response.status_code >= 200 and response.status_code < 300:
+        try:
+            response.raise_for_status()
             # logger.debug('RESPONSE 200: {}'.format(response.text))
             return response
-        else:
-            # logger.error('{}\n\n{}'.format(response.text, data))
-            raise ArweaveException(response.text, data, url)
+        except requests.exceptions.RequestException as exc:
+            logger.error('{}\n\n{}'.format(response.text, data))
+            raise ArweaveNetworkException(response.text, exc, response)
 
 class Peer(HTTPClient):
     # peer api [incomplete]:
@@ -83,6 +88,80 @@ class Peer(HTTPClient):
         '''
         response = self._get('info')
         return response.json()
+
+    def probe(self):
+        features = []
+        systems = []
+        status = {}
+        exclude = set()
+
+        def load_balancing_proxy():
+            sync_record_1 = self.data_sync_record(0,1)[-1]
+            sync_record_2 = self.data_sync_record(0,2)[-1]
+            if sync_record_1 == sync_record_2:
+                raise ArweaveNetworkException()
+
+        def peers():
+            health = status.get('health')
+            if health is not None:
+                status['peers'] = [origin['endpoint'].split('://',1)[1] for origin in health['origins']]
+                raise ArweaveNetworkException()
+            else:
+                return self.peers()
+
+        probes = dict(
+            arql = dict(
+                params = [dict(op='equals',expr1='',expr2='')],
+            ),
+            graphql = dict(
+                params = ['query{transaction(id:""){id}}']
+            ),
+            load_balancing_proxy = dict(
+                probe = load_balancing_proxy,
+                exclude = ['info', 'sync_buckets']
+            ),
+            cache_jobs = dict(
+                system = 'arseeding',
+            ),
+            health = dict(
+                system = 'arweave-gateway',
+            ),
+            info = dict(
+                system = 'arweave-erlang'
+            ),
+            peers = dict(
+                probe = peers,
+                system = 'arweave-erlang'
+            ),
+            sync_buckets = dict(
+                system = 'arweave-erlang'
+            )
+        )
+
+        for probe, options in probes.items():
+            if probe in exclude:
+                continue
+            try:
+                params = options.get('params',[])
+                func = options.get('probe')
+                if func is None:
+                    func = getattr(self, probe)
+                reply = func(*options.get('params',[]))
+                if len(params) == 0 and reply is not None:
+                    status[options.get('status',probe)] = reply
+                exclude.update(options.get('exclude',[]))
+                features.append(options.get('feature',probe))
+                system = options.get('system')
+                if system is not None and system not in systems:
+                    systems.append(system)
+            except ArweaveNetworkException:
+                continue
+ 
+        return {
+            'guess': systems,
+            'features': features,
+            'status': status
+        }
 
     def time(self):
         '''Return the current universal time in seconds.'''
@@ -176,14 +255,6 @@ class Peer(HTTPClient):
         }
         '''
         response = self._post(logical_expression, 'arql')
-        return response.json()
-
-    def graphql(self, query):
-        response = self._post({
-            'operationName': None,
-            'query': query,
-            'variables': {}
-        }, 'graphql')
         return response.json()
 
     def tx_data_html(self, txid):
@@ -745,6 +816,22 @@ class Peer(HTTPClient):
             headers = {}
         response = self._get(txid + ext, headers = headers, stream = True)
         return response_stream_to_file_object(response)
+
+    # below are used with https://github.com/ar-io/arweave-gateway
+
+    def graphql(self, query):
+        response = self._post({
+            'operationName': None,
+            'query': query,
+            'variables': {}
+        }, 'graphql')
+        return response.json()
+
+    def health(self):
+        '''Returns information on the connected peers and database.'''
+        response = self._get('health')
+        return response.json()
+        
 
     # below are used with https://github.com/everFinance/arseeding
 
