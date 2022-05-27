@@ -4,6 +4,9 @@ from ar.utils import (
     arbinenc, arintenc, arbindec, arintdec, erlintenc, erlintdec, b64enc_if_not_str, b64enc, b64dec
 )
 
+# note: there are actually three different block formats in chain history,
+# according to https://docs.arweave.org/developers/server/http-api#block-format
+
 class Block:
     def __init__(self, indep_hash, prev_block, timestamp, nonce,
                  height, diff, cumulative_diff, last_retarget,
