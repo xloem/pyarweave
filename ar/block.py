@@ -1,7 +1,7 @@
 import fractions
 import io
 from ar.utils import (
-    arbinenc, arintenc, arbindec, arintdec, erlintenc, erlintdec, b64enc_if_not_str, b64enc, b64dec
+    arbinenc, arintenc, arbindec, arintdec, b64enc_if_not_str, b64enc, b64dec
 )
 
 # note: there are actually three different block formats in chain history,
@@ -143,11 +143,11 @@ class Block:
         poa_tx_path_raw              = arbindec(stream, 24)
         poa_data_path_raw            = arbindec(stream, 24)
 
-        tags_count = erlintdec(stream, 16)
+        tags_count = int.from_bytes(stream.read(2), 'big')
         tags       = [arbindec(stream, 16) for idx in range(tags_count)]
 
         # either 32-byte txids or complete txs
-        txs_count = erlintdec(stream, 16)
+        txs_count = int.from_bytes(stream.read(2), 'big')
         txs_raw = [arbindec(stream, 24) for idx in range(txs_count)]
         txs = [b64enc(tx) for tx in txs_raw[::-1]]
 
@@ -229,10 +229,10 @@ class Block:
         stream.write(arbinenc(self.poa_chunk_raw,                  24))
         stream.write(arbinenc(self.poa_tx_path_raw,                24))
         stream.write(arbinenc(self.poa_data_path_raw,              24))
-        stream.write(erlintenc(len(self.tags), 16))
+        stream.write(len(self.tags).to_bytes(2, 'big'))
         for tag in self.tags:
             stream.write(arbinenc(tag,                             16))
-        stream.write(erlintenc(len(self.txs), 16))
+        stream.write(len(self.txs).to_bytes(2, 'big'))
         for tx in self.txs[::-1]:
             stream.write(arbinenc(b64dec(tx),                      24))
         return stream.getvalue()

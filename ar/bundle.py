@@ -24,8 +24,9 @@ ANS104_TAGS_SCHEMA = {
 ANS104_TAGS_SCHEMA_fastavro = fastavro.parse_schema(ANS104_TAGS_SCHEMA)
 
 class ANS104BundleHeader:
-    def __init__(self, length_by_id = {}):
+    def __init__(self, length_by_id = {}, version = 2):
         self.length_by_id = length_by_id
+        self.version = version
 
     def get_count(self):
         return len(self.length_by_id)
@@ -68,7 +69,7 @@ class ANS104BundleHeader:
         return cls({
             dataitem.id: dataitem.get_len_bytes()
             for dataitem in dataitems
-        })
+        }, version=1)
 
     @classmethod
     def frombytes(cls, data):
@@ -87,7 +88,7 @@ class ANS104BundleHeader:
         return cls({
             id: length
             for length, id in length_id_pairs
-        })
+        }, version=2)
 
 class ANS104DataItemHeader:
     def __init__(self, tags = [], owner=None, target=None, anchor=None, signature=None, signer=DEFAULT_SIGNER):

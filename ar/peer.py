@@ -3,7 +3,7 @@ import requests
 import json
 
 from . import DEFAULT_API_URL, logger, ArweaveException, ArweaveNetworkException
-from .utils import response_stream_to_file_object, b64dec, be_u256dec
+from .utils import response_stream_to_file_object, b64dec, arbindec
 
 class HTTPClient:
     def __init__(self, api_url, timeout = None, retries = 5):
@@ -337,13 +337,15 @@ class Peer(HTTPClient):
                 pass
         intervals = erlang.binary_to_term(response.content)
         intervals = [
-            (be_u256dec(left.value), be_u256dec(right.value))
+            (int.from_bytes(left.value, 32, 'big'), int.from_bytes(right.value, 32, 'big'))
             for left, right in intervals
         ]
         return intervals
 
     def chunk(self, offset, packing = 'unpacked', bucket_based_offset = False):
         '''
+        Returns the data chunk containing 1-based offset,
+        using json, base64 encoded network transmission.
 
         {packing} := { 'unpacked' | 'spora_2_5' | 'any' }
 
@@ -369,10 +371,12 @@ class Peer(HTTPClient):
 
     def chunk2(self, offset, packing = 'unpacked', bucket_based_offset = False):
         '''
+        Returns the data chunk containing 1-based offset,
+        using raw binary network transmission.
 
         {packing} := { 'unpacked' | 'spora_2_5' | 'any' }
 
-        Returns: b[
+        The raw data format from the endpoint is b[
             chunk_size      3 bytes, big-endian
             chunk           chunk_size bytes
 
@@ -385,6 +389,14 @@ class Peer(HTTPClient):
             packing2_size   1 byte
             packing2        packing2_size bytes
         ]
+
+        This function parses it to return the same format as chunk():
+        {
+            "chunk": b"<chunk>",
+            "tx_path": b"<txpath>",
+            "data_path"; b"<datapath>",
+            "packing": "packing"
+        }
         '''
 
         headers = {
@@ -393,21 +405,44 @@ class Peer(HTTPClient):
         if bucket_based_offset:
             headers['x-bucket-based-offset'] = '1'
 
-        response = self._get('chunk2', str(offset), headers=headers)
-        return response.content
+        response = self._get('chunk2', str(offset), headers=headers, stream = True)
+        with response_stream_to_file_object(response) as stream:
+            result = {}
+            result['chunk'] = arbindec(stream, 24)
+            result['tx_path'] = arbindec(stream, 24)
+            result['data_path'] = arbindec(stream, 24)
+            result['packing'] = arbindec(stream, 8).decode()
+            extra = stream.read()
+            if extra:
+                result['_extra'] = extra
+            return result
+
+    def chunk_size(self, offset, packing = 'unpacked', bucket_based_offset = False):
+        '''Returns the size of the data chunk containing (offset - 1).'''
+
+        headers = {
+            'x-packing': packing,
+            'Range': 'bytes=0-3',
+        }
+        if bucket_based_offset:
+            headers['x-bucket-based-offset'] = '1'
+
+        response = self._get('chunk2', str(offset), headers=headers, stream = True)
+        with response_stream_to_file_object(response) as stream:
+            return int.from_bytes(stream.read(3), 'big')
 
     def tx_offset(self, hash):
         '''
         Get the absolute end offset and size of the transaction
 
-        The client may use this information to collect transaction chunks. Start with
-        the end offset and fetch a chunk via chunk(<offset>). Subtract its size
-        from the transaction size - if there are more chunks to fetch, subtract the
-        size of the chunk from the offset and fetch the next chunk.
+        The client may use this information to collect transaction chunks. Add 1 to
+        the end offset and substract the size to get the start offset, then fetch a
+        chunk via chunk(<start offset>). Add its size to the start offset and fetch
+        the next chunk - if there are more chunks, continue to do the same.
 
         {
-            "offset": <Offset>,
-            "size": <Size>
+            "offset": <offset of last byte of tx data>,
+            "size": <total size of tx data>
         }
         '''
         response = self._get('tx', hash, 'offset')
