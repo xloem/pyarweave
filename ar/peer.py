@@ -418,7 +418,7 @@ class Peer(HTTPClient):
             return result
 
     def chunk_size(self, offset, packing = 'unpacked', bucket_based_offset = False):
-        '''Returns the size of the data chunk containing (offset - 1).'''
+        '''Returns the size of the data chunk containing 1-based offset.'''
 
         headers = {
             'x-packing': packing,
