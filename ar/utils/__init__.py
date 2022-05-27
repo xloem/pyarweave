@@ -283,7 +283,6 @@ class ChunkStream(io.RawIOBase):
             self.chunks[nearest_idx + 1 : nearest_idx + 1] = additional[::-1]
             return chunk_first, chunk_last
 
-        import pdb; pdb.set_trace()
         right_idx = bisect.bisect_right(self.chunks, offset, key=lambda interval: interval[1])
         left_idx = right_idx - 1
         if right_idx == 0:
