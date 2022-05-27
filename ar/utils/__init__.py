@@ -191,7 +191,46 @@ class response_stream_to_file_object:
     def __del__(self):
         self.close()
 
-import bisect, io
+#import io
+#class ChunkStream(io.RawIOBase):
+#    def __init__(self, peer, first_offset, last_offset = float('inf'), aligned_offset = None):
+#        self.peer = peer
+#        if aligned_offset is None:
+#            aligned_offset = first_offset
+#        self.aligned_offset = aligned_offset
+#        self.stream_first = first_offset
+#        self.stream_last = last_offset
+#        self.offset = first_offset
+#        self.chunk = None
+#        self.chunk_first = None
+#    def readable(self):
+#        return True
+#    def seekable(self):
+#        return True
+#    def tell(self):
+#        return self.offset - self.stream_first
+#    def seek(self, offset, whence = io.SEEK_SET):
+#        offset += {
+#            io.SEEK_SET: self.stream_first,
+#            io.SEEK_CUR: self.offset,
+#            io.SEEK_END: self.stream_last + 1
+#        }[whence]
+#    
+#        #if self.chunk is not None and (offset < self.chunk_first or offset > self.chunk_last):
+#        #    self.chunk = None
+#
+#        aligned_offset = offset - self.aligned_offset 
+#        aligned_offset -= aligned_offset % 0x40000
+#        self.chunk_first = aligned_offset + self.aligned_offset
+#        
+#        self.offset = offset
+#    def readinto(self, b):
+#        if self.chunk is None:
+#            self.chunk_first = self.peer.chunk_size
+#            result = self.peer.chunk2(self.offset)
+#            self.chunk = resuolt['chunk']
+    
+import bisect, io, ar
 class ChunkStream(io.RawIOBase):
 
     # This could be much improved by calculating based on the 256KiB portions that
@@ -199,8 +238,11 @@ class ChunkStream(io.RawIOBase):
     # https://github.com/ArweaveTeam/arweave/blob/master/apps/arweave/src/ar_data_sync.erl#L118
 
     @classmethod
-    def from_txid(cls, peer, txid):
-        tx_offset = peer.tx_offset(txid)
+    def from_txid(cls, peer, txid, offset = 0, length = None):
+        try:
+            tx_offset = peer.tx_offset(txid)
+        except ar.ArweaveNetworkException:
+            tx_offset = peer.tx(txid)['offset']
 
         stream_last = tx_offset['offset']
         stream_size = tx_offset['size']
@@ -220,7 +262,7 @@ class ChunkStream(io.RawIOBase):
 
         logger.info(f'{txid} measured.')
 
-        return cls(peer, offset_pairs, stream_first, stream_last)
+        return cls(peer, offset_pairs, stream_first + offset, stream_last if length is None else stream_first + offset + length)
 
     def __init__(self, peer, first_last_chunk_offset_pairs, stream_first_offset, stream_last_offset = float('inf')):
         # instead of first/last chunk pairs, this could use pairs of absolute and suboffset  . if the suboffset is negative, it would be from the end. then fewer requests are needed.

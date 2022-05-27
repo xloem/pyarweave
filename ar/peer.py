@@ -1,9 +1,10 @@
 import erlang
+import io
 import requests
 import json
 
 from . import DEFAULT_API_URL, logger, ArweaveException, ArweaveNetworkException
-from .utils import response_stream_to_file_object, b64dec, arbindec
+from .utils import response_stream_to_file_object, b64dec, arbindec, ChunkStream
 
 class HTTPClient:
     def __init__(self, api_url, timeout = None, retries = 5):
@@ -875,11 +876,9 @@ class Peer(HTTPClient):
 
     def stream(self, txid, ext = '', range = None):
         if range is not None:
-            headers = {'Range':f'bytes={range[0]}-{range[1]}'}
+            return io.BufferedReader(ChunkStream.from_txid(self, txid, range[0], range[1]-range[0]), 0x40000)
         else:
-            headers = {}
-        response = self._get(txid + ext, headers = headers, stream = True)
-        return response_stream_to_file_object(response)
+            return io.BufferedReader(ChunkStream.from_txid(self, txid), 0x40000)
 
     # below are used with https://github.com/ar-io/arweave-gateway
 
