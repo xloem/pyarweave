@@ -2,39 +2,74 @@ import math
 
 import ar
 
-from ar.utils import b64enc, b64dec_if_not_bytes, utf8enc_if_not_bytes, create_tag
+from ar.utils import b64enc, b64dec, b64dec_if_not_bytes, utf8enc_if_not_bytes, create_tag, tags_to_dict
 
 ## HashMap
 
 # Composed of table documents.
 
 # Table document structure:
+# TODO: TYPE could be a bitfield at the start of the document, which would provide
+#       for including more records. For further compression, BLOCKHASH and TXHASH
+#       could be indexed for reuse.
 #
-# A sequence of:
-#   TXHASH  32 bytes
-#   TYPE    1 byte
+# VERSION         1 byte = 1
+#
+# A sequence of 169 byte entries:
+#   TYPE          1 byte
+#   BLOCKHASH    48 bytes
+#   TXHASH       32 bytes
+#   DATAITEMHASH 32 bytes
 #
 # Additionally, table documents have the properties:
 #   COUNT
 #   DEPTH
 #
-# TXHASH
-#   32 bytes that refer to another document.
-#   The TYPE field identifies the nature of the document.
+# BLOCKHASH, TXHASH, DATAITEMHASH
+#   These refer uniquely to a range of bytes within a transaction containing
+#   another document.
+#
+#   TXHASH refers to an L1 transaction containing the document, not a bundled dataitem.
+#   DATAITEMHASH refers to the document's smallest surrounding transaction, a dataitem id
+#               if the document is bundled, or the same L1 transaction id if it is not.
+#   BLOCKHASH is the mined block containing TXHASH.
+#
+#   The document is defined as occupying the entire data portion of DATAITEMHASH.
+
+###   OFFSET refers to an offset within TXHASH containing the bytes of the document.
+###              This will be 0 if the document is nonbundled, and 1 past the end of
+###              the dataitem header if it is.
+###   SIZE is the length of the document in bytes.
+###
+### BLOCKHASH, CHUNK, CHUNK_OFFSET
+###   
+###   BLOCKHASH refers to the block and fork that TXHASH was mined in at time of
+###             creation of the table.
+###   CHUNK is the absolute first byte of data, that will return the chunk containing
+###               the first byte of the document when passed to /chunk/ or /chunk2/,
+###               at the time of creation of the table.
+###   CHUNK_OFFSET is the offset of the first byte of the data within the chunk
+###               returned when queried with CHUNK.
+###
+###   The purpose of these is to both provide enough information to cryptographically
+###   verify the documents what they refer to, and to make it quick and easy to
+###   retrieve them.
 #
 # TYPE
 #   May take on one of the following values:
 #   0 or TYPE_EMPTY
-#   1 or TYPE_TABLE: TXHASH is a table document with 1 greater DEPTH.
-#   2 or TYPE_DATA: TXHASH is a data document
+#   1 or TYPE_TABLE: DATAITEMHASH is a table document with 1 greater DEPTH.
+#   2 or TYPE_DATA: DATAITEMHASH is a data document
 #
 # COUNT
-#   Count is the number of txhashes in a table, and is equal to the size divided by 33.
+#   Count is the number of txhashes in a table, and is equal to the size divided by 97.
 #
 # DEPTH
 #   Depth reflects which part of a hash the table document relates to.
 #   At depth == 0, the table reflects the leftmost bytes of the hash.
 #   At depth == 31, the table reflects the rightmost bytes of the hash.
+#   The root document of a hashmap has a depth of 0, and each document a table
+#   references has one greater depth.
 
 # Looking up items using a hashmap:
 #
@@ -44,7 +79,7 @@ from ar.utils import b64enc, b64dec_if_not_bytes, utf8enc_if_not_bytes, create_t
 # 
 # 1. Convert the hash to a biginteger in a little-endian manner.
 # 2. Perform the modulo of the hash with the table COUNT to get the item INDEX.
-# 3. Multiply INDEX by 33 to get the offset of the next TXHASH and TYPE and read them.
+# 3. Multiply INDEX by 33 to get the offset of the next TX/DATAITEM and TYPE and read them.
 # 4. If the TYPE is TYPE_TABLE:
 #    a. Subtract INDEX from the hash then divide the hash by COUNT for the next table.
 #    b. Retrieve TXHASH and return to step 2 using the next table document.
@@ -83,8 +118,36 @@ from ar.utils import b64enc, b64dec_if_not_bytes, utf8enc_if_not_bytes, create_t
 ####### so we can collect documents in a bottom-up manner, until we reach a duplicate
 ####### once a digit is duplicated, then it needs an index
 
+ZEROS32 = bytes(32)
+ZEROS48 = bytes(48)
+
+import threading
+
+#class IdentifiedData:
+#    #class BundleWatcher(threading.Thread):
+#    #    def __init__(self, peer):
+#    #        self.peer = peer
+#    #    def run(self):
+#
+#    #watcher = None
+#
+#    def __init__(self, loader, data = None, id = None, offset = 0, size = None):
+#        self.loader = loader
+#        self.data = data
+#        self.id = b64enc_if_not_str(id)
+#        self.offset = offset
+#        self.size = size
+#    def load(self, loader, data = None):
+#        if data is not None:
+#            self.data = data
+#        self.id = loader.send(self.data)
+#        if self.watcher is None:
+#            self.__class__.watcher = self.__class__.BundleWatcher(loader.peer)
+#        self.watcher.watch(self)
+    
+
 class BackedStructur:
-    def __init__(self, size = None, item_count = None, item_size = None, id_raw = None, loader = None):
+    def __init__(self, loader, size = None, item_count = None, item_size = None, id_raw = None, bundle_raw = None, block_raw = None, additional_tags = []):
         if size is None:
             size = item_count * item_size
         elif item_count is None:
@@ -96,8 +159,12 @@ class BackedStructur:
         self.item_size = item_size
         self.item_count = item_count
         self._id_raw = id_raw
+        self._bundle_raw = bundle_raw
+        self._block_raw = block_raw
         self.bytes = bytes
         self.loader = loader
+        self.additional_tags = additional_tags
+        self.dirty = False
 
         if self.id_raw is None:
             self.shadow = bytearray(size)
@@ -106,25 +173,79 @@ class BackedStructur:
         self.dirty = False
 
     @property
-    def id(self):
-        return utf8enc(self.id_raw)
+    def ids(self):
+        return b64enc(self.id_raw), b64enc(self.bundle_raw), b64enc(self.block_raw)
+
+    @property
+    def ids_raw(Self):
+        txid_raw = self.bundle_raw if self.bundle_raw != ZEROS32 else self.id_raw
+        return self.block_raw + txid_raw + self.id_raw
 
     @property
     def id_raw(self):
         self.flush()
         return self._id_raw
 
+    @property
+    def bundle_raw(self):
+        if self._bundle_raw is None:
+            # instead of graphql, this could call a method on loader that would watch for
+            # bundles and parse them, as in bundlewatcher.py
+            result = self.loader.graphql('''
+                query {
+                    transaction(id: "'''+b64enc(self._id_raw)+'''") {
+                        bundledIn { id }
+                        block { id }
+                    }
+                }''')['data']['transaction']
+            if result is None:
+                ar.logger.info(f'Waiting for {b64enc(id_raw)} to propagate ...')
+                time.sleep(30)
+                return self.bundle_raw
+            bundledIn = result['bundledIn']
+            if bundledIn is None:
+                self._bundle_raw = ZEROS32
+            else:
+                self._bundle_raw = b64dec(bundledIn['id'])
+            block = result['block']
+            if block is None:
+                self._block_raw = None
+            else:
+                self._block_raw = b64dec(block['id'])
+        return self._bundle_raw
+
+    @property
+    def block_raw(self):
+        if self._block_raw is None:
+            bundle_raw = self.bundle_raw
+        if self._block_raw is None:
+            id_raw = self._id_raw if bundle_raw == ZEROS32 else bundle_raw
+            result = self.loader.graphql('''
+                query {
+                    transaction(id: "{'''+b64enc(self._id_raw)+'''}") {
+                        block { id }
+                    }
+                }''')['data']['transaction']
+            block = result['block']
+            if block is None:
+                logger.info(f'Waiting for {b64enc(id_raw)} to be mined ...')
+                time.sleep(30)
+                return self.block_raw
+            else:
+                self._block_raw = b64dec(block['id'])
+        return self._block_raw
+
     def __enter__(self):
         self.get()
 
-    def __exit__(self):
+    def __exit__(self, *params):
         self.flush()
 
     def __getitem__(self, index):
         offset = index * self.item_size
         return self.get()[offset : offset + self.item_size]
 
-    def __setitem__(self, index, value)
+    def __setitem__(self, index, value):
         offset = index * self.item_size
         shadow = self.get()
         if shadow[offset : offset + self.item_size] != value:
@@ -137,7 +258,7 @@ class BackedStructur:
     def __iter__(self):
         shadow = self.get()
         for offset in range(0, self.size, self.item_size):
-            yield shadow[offset : offset + self.item_Size]
+            yield shadow[offset : offset + self.item_size]
 
     def append(self, value):
         self.item_count += 1
@@ -146,26 +267,41 @@ class BackedStructur:
     
     def get(self):
         if self.shadow is None:
-            self.shadow = bytearray(self.loader.data(self.id_raw))
+            self.shadow = bytearray(self.loader.data(self.id_raw, self.bundle_raw, self.block_raw))
         return self.shadow
 
     def flush(self):
         if self.dirty:
             tags = [
-                create_tag('Application', 'HashMap')
+                *self.additional_tags,
+                create_tag('Application', 'HashMap', True),
             ]
-            if self.id_raw is not None:
-                tags = create_tag('Previous-Revision', self.id)
-            self._id_raw = self.loader.send(self.shadow, tags=tags)
+            if self._id_raw is not None:
+                tags.append(create_tag('Previous-Revision', self.id))
+            if self._block_raw is not None:
+                tags.append(create_tag('Previous-Revision-Block', self.block))
+            if self._bundle_raw is not None:
+                tags.append(create_tag('Previous-Revision-Bundle', self.bundle))
+            id = self.loader.send(self.shadow, tags=tags)
+            ar.logger.info(f'sent {id}.')
+            self._id_raw = b64dec(id)
+            self._bundle_raw = None
+            self._block_raw = None
+            self.dirty = False
 
 class TableDoc:
     EMPTY = 0
     TABLE = 1
     DATA = 2
     _UNPROCESSED = 3
-    def __init__(self, txcontent_to_digits, size = None, item_count = None, id_raw = None, loader = None, parent = None):
+    def __init__(self, loader, txcontent_to_digits, size = None, item_count = None, id_raw = None, dataitem_raw = None, block_raw = None, parent = None, additional_tags = []):
+        if dataitem_raw is None:
+            bundle_raw = None
+        else:
+            bundle_raw = id_raw
+            id_raw = dataitem_raw
         self.txcontent_to_digits = txcontent_to_digits
-        self.remote_data = BackedStructure(size = size, item_count = item_count, item_size = 33, id_raw = id_raw, loader = loader)
+        self.remote_data = BackedStructur(loader, size = size, item_count = item_count, item_size = 97, additional_tags = additional_tags, id_raw = id_raw, bundle_raw = bundle_raw, block_raw = block_raw)
         if parent is None:
             self.depth = 0
             self.total_height = math.ceil(
@@ -176,39 +312,48 @@ class TableDoc:
             self.depth = parent.depth + 1
             self.total_height = parent.total_height
         self.obj_list = [
-            (entry_raw[-1], entry_raw[:32])
+            (entry_raw[0], entry_raw[1:97])
             for entry_raw in self.remote_data
         ]
 
-    def get_filling_if_needed(hash_digit):
+    def get_filling_if_needed(self, hash_digit):
         entry = self.obj_list[hash_digit]
         entry_type, entry = entry
         if type(entry) is bytes:
-            if entry_Type == self.EMPTY:
+            assert len(entry) == 112
+            if entry_type == self.EMPTY:
                 entry = None
             elif entry_type == self.TABLE:
+                block_raw = entry[:48]
+                txid_raw = entry[48:80]
+                dataitem_raw = entry[80:112]
                 entry = TableDoc(
                     size = self.remote_data.size,
                     item_count = self.remote_data.item_count,
                     item_size = self.remote_data.item_size,
-                    id_raw = entry,
+                    id_raw = dataitem_raw,
+                    bundle_raw = txid_raw if dataitem_raw != txid_raw else ZEROS32,
+                    block_raw = block_raw,
                     loader = self.remote_data.loader,
                     parent = self
                 )
             elif entry_type == self.DATA:
-                entry = (self.txcontent_to_digits(utf8enc(entry)), entry)
+                block_raw = entry[:48]
+                txid_raw = entry[48:80]
+                dataitem_raw = entry[80:112]
+                entry = (self.txcontent_to_digits(utf8enc(dataitem_raw), utf8enc(txid_raw), utf8enc(block_raw)), (block_raw, txid_raw, dataitem_raw))
             else:
                 raise StructureException('unhandled table entry type', type)
             self.obj_list[hash_digit] = (entry_type, entry)
         return entry_type, entry
 
-    def set(hash_digits, id_raw):
+    def set(self, hash_digits, block_raw, txid_raw, dataitem_raw):
         hash_digit = hash_digits[self.depth]
         entry_type, entry = self.get_filling_if_needed(hash_digit)
         if entry_type == self.EMPTY:
-            entry_type, entry = (self.DATA, (hash_digits, id_raw))
+            entry_type, entry = (self.DATA, (hash_digits, (block_raw, txid_raw, dataitem_raw)))
         elif entry_type == self.TABLE:
-            entry.set(hash_digits, id_raw)
+            entry.set(hash_digits, block_raw, txid_raw, dataitem_raw)
         elif entry_type == self.DATA:
             subtable = TableDoc(
                 size = self.remote_data.size,
@@ -218,7 +363,7 @@ class TableDoc:
                 parent = self
             )
             subtable.set(*entry)
-            entry.set(hash_digits, id_raw)
+            entry.set(hash_digits, block_raw, txid_raw, dataitem_raw)
             entry = subtable
             entry_type = self.TABLE
         else:
@@ -245,44 +390,93 @@ class TableDoc:
                 if entry_type == self.EMPTY:
                     pass
                 elif entry_type == self.TABLE:
-                    entry = entry.raw_id
-                elif entry_Type == self.DATA:
-                    entry = entry[1]
-                self.remote_data.write(idx, entry + bytes([entry_type]))
+                    entry = b''.join(entry)
+                elif entry_type == self.DATA:
+                    entry = b''.join(entry[1])
+                self.remote_data[idx] = bytes([entry_type]) + entry
 
     @property
-    def raw_id(self):
+    def raw_ids(self):
         self.flush()
-        return self.remote_data.raw_id
+        return self.remote_data.ids_raw
     
     def __getitem__(self, hash):
         digits = self.hash_to_digits(hash)
         result = self.get(digits)
         return b64enc_if_not_str(result)
 
-    def __setitem__(self, hash, txid):
+    def __setitem__(self, hash, tuple):
+        block, txid, dataitem = tuple
+        block_raw = b64dec_if_not_bytes(block)
         txid_raw = b64dec_if_not_bytes(txid)
+        dataitem_raw = b64dec_if_not_bytes(dataitem)
         digits = self.hash_to_digits(hash)
-        self.set(digits, txid_raw)
+        self.set(digits, block_raw, txid_raw, dataitem_raw)
 
     def __enter__(self):
-        super().__enter__()
         return self
     def __exit__(self, *params):
-        super().__exit__(*paramS)
         self.flush()
 
     def hash_to_digits(self, hash):
         digits = []
-        hash = b64dec_if_not_bytes(hash)
+        hash_raw = b64dec_if_not_bytes(hash)
         hash_int = int.from_bytes(hash_raw, 'little')
         base = self.remote_data.item_count
         for idx in range(self.total_height):
-            hash_int, digit = divmod(hash_int, self.item_count)
+            hash_int, digit = divmod(hash_int, self.remote_data.item_count)
             digits.append(digit)
         return digits
 
-#class HashMap(
+class HashMap(TableDoc):
+    def __init__(self, txcontent_to_digits, size, id = None, block = None, dataitem = None, loader = None, tags = {}):
+        if loader is None:
+            loader = ar.Peer()
+        id_raw = b64dec_if_not_bytes(id)
+        block_raw = b64dec_if_not_bytes(block)
+        dataitem_raw = b64dec_if_not_bytes(dataitem)
+        super().__init__(txcontent_to_digits, size = size, item_count = None, id_raw = id_raw, block_raw = block_raw, dataitem_raw = dataitem_raw, loader = loader)
+
+from ar import ANS104BundleHeader
+class BundleIndexer:
+    def __init__(self, loader, id = None, bundle = None, block = None, start_block = 761917, size = 100000):
+        if id is not None:
+            id_raw = b64dec_if_not_bytes(id)
+            tags = [tag for tag in loader.tags(id, bundle, block) if tag['name'] not in (b'Application', b'Previous-Revision')]
+            if 'Block-Min' in tags_dict:
+                self.prev_block = tags_dict[b'Block-Min'] - 1
+                if 'Block-Max' in tags_dict:
+                    self.next_block = tags_dict[b'Block-Max'] + 1
+                else:
+                    self.next_block = self.prev_block + 2
+            elif 'Block-Max' in tags_dict:
+                self.next_block = tags_dict[b'Block-Max'] + 1
+                self.prev_block = self.next_block - 2
+            else:
+                self.prev_block = start_block
+                self.next_block = start_block
+            tags = [tag for tag in tags if tag['name'] not in (b'Block-Min', b'Block-Max')]
+        else:
+            id_raw = None
+            tags = []
+            self.prev_block = start_block
+            self.next_block = start_block
+        self.root = TableDoc(loader, self.txcontent_to_digits, size=size, id_raw = id_raw, additional_tags = tags)
+    def txcontent_to_digits(self, txid_raw):
+        self.remote_data.add()
+    def add_forward(self):
+        loader = self.root.remote_data.loader
+        with self.root:
+            block = loader.block_height(self.next_block)
+            for tx in block['txs']:
+                header = ANS104BundleHeader.from_tags_stream(loader.tx_tags(tx), loader.stream(tx))
+                if header is None:
+                    continue
+                for bundled_id in header.length_by_id.keys():
+                    self.root[bundled_id] = (tx, block['indep_hash'], bundled_id)
+            tags_dict = tags_to_dict(self.root.remote_data.additional_tags)
+            tags_dict[b'Block-Max'] = self.next_block
+            self.next_block += 1
 
 #class TableDoc(BackedStructure):
 #        super().__init__(size = size, item_count = item_count, item_size = 33, id_raw = id_raw, loader = loader)
@@ -557,4 +751,28 @@ class TableDoc:
 
 
 
-
+if __name__ == '__main__':
+    ar.logging.basicConfig(level=ar.logging.INFO)
+    from bundlr import Node
+    from bundlr.loader import Loader
+    from ar import Peer, Wallet
+    wallet = {
+        "alg": "RS256",
+        "kty": "RSA",
+        "n": "zEiPuKuOPAloc9Bzi0LCaVxcgO7aWrcvPKfRUeWfeAHADZfyWvcHyjU89LFK4mbBxbf7e0foKftKU32E5kWrvpBoBjosaIwsCPJ0_RY1U2fH7UXFQkKaP3N09vtR729iCZh71sX-lsDb5J5krjpPgb0wFLQiXxdhuFDglJwDgml3k2s90BmM2YinBBE2RKecVHi6B8s4cfl9QuTN4XbqLdFJRz22bxELD1Fqko6qTAjfKymV9ZC8F7IxHG_Db_S1mk5RMZU7BvJfxXLh1pHav_pAqiQtAsxu4ZauxBWfYObdoZFeVoE90Q14Rc1_VvKexoqzh-QV4Z51G9D5k0S2mXOs0LgdValQeDWzLIvbRQX7hEJqZmHEYMZM1hJCZGNkdit0H2zYoSMlCUQruWhgD9kGJG-lcKW1U0a5N-7GoQM_hlrPYP4i0_x2RNhIn370Dl5Pofttok7XZEGLCQf8IZuSQWvSZqrurEPIK-DdFf7piGJI4kYAtfqMr11rZfPOOeFCtmtyomkwSGOckuq2Kiieco1qWXBrYq5QgnmUiZZijJ1Tt2Gwxlltnd8yKF-mCDdtZRObpmRoOfPUdq7-i-yglgoWA41cl0kZNwfrWKE8jLdv5nmuDZJqglagtTtIgScOvoTg8v0SLaAiB35i20tSqAQVoa45TbBMgFemnrE",
+        "e": "AQAB",
+        "d": "GBWl_DEdv9j2xlDD4_NRqyJcivGeL3vRceacjc9IvIQC-eykLN1bFG1aa8RLU-NRjSy31ZJmE4JbrPmWJZ_-iPp1iTu_6JjoyCqYaGOp6H91LsrptXosvWEGCpMZgeUxOyMN1rCD54-CsrLfTpCetxPFthXWx5H2JMju8WvDbiizvwmxwUssiVPMfR-aX6sd30eshya1LPAr4yseqtUI9FtBtx3WLcS7TRRdlZHZuhqBqpETQQnODe0lpSNNeMbycj2G4mr5s-6iI_amHFTDOZxuQKEAkt06EBa33B5rKqg4ER3BGunPOUp2l6Q2vdrfpVYiUdnY9T9oBzOII-Nss6IbM4zbz_4L3y62y_4q2uRwVOPNuW8o3dJyCBMyZq8BS7f0qIM8MuZeSO30foQlp27Yh0YOJTy3JwcbQj6d-EAjDHi6ZeyIU5Pyyap7pisFSirEyR__EBbXfZ417MBg6FBPLvfMAQLXPv8EU3r8VWAnsmthmJ0Pt5Ar_7Ypng701Bv1a1PY294K6V-gufTJpnXJB_ZORY6Ccaor9RHg_DvMqWak1VA1Yp6OoMO9Oa3udGcLUopsxa8stLrl9H_Gc0ya7f6IGQ2TtgYkV4v8N_5DAFQYh1ato_6kX9-VmmOS32w0HX4f1ULDV5MVAaduqbM5u4BNrU3ynfYRlBVkl9E",
+        "p": "1VITXO-tCfYh0JUvCA3qKNOzvgjAavvPRlSVRORTdEDdQjr3BKmOvcqhs1wGhMeJ5vOUggaKOa01KgtCj__JDm48cf91TNXpQjC5zbKpgEwJFOfnbpi1ZROv2V95rfua6RRaLAxCZpTWz0ye3PzxiPC29cn-a1wS8HacPNmiWJDRkmdN6IrpDhBpr1fUzq6Pm3QVk2FWXYZ_lE1wibIDd-y7HtDaNXz4Du5zU19-ahbIvDTMC3uqp2aWLKl1jJkOIoa4feiunXNHtStLl-73ahM171jcGhKQ-ec5fiDxZCH3vokB-Aj7TXw1x68x8FKQH8QlU4_toNfI0SaOpUhtgw",
+        "q": "9SeeCIvQUb14z49YOG6P8VNT-v7rBqef7I8pyjy9QymadbwUfLPAAs0nJircynQ5ddnQbY01fZnRkYmlLDt2K09Nfr0ld0-m89fM9Du7X4IUCiK6s29zRxQAYKGWpxQSvTL157iY13LSHGsI3QG_lz7AclONtg3uijYP3_v0tgwjUrzzUInQt6AWi_-v7EnZNjMj96n-dCAfEn4UyrV7lD98enYZN6_kEloUsGD_Bqa3aenHiQ2ljXtvqdWh1WNmzhdkz26X8NuhJ1rNQR90yqeCGqBnCW6D62tB__GKjKDCx4QiWIobB26S9J0WFODa8dZiBSstddwcSMnPXKTguw",
+        "dp": "BmVgmT_Cc3MCzos6jsZECBdY41DF3C9SpqwwkZE7A1hSigLUlzoyQnSJ5qPSujZ1ZwxUnpVtnY8Y8frGcyTbNWiOvWhIbxZW2Ro25_j8ZhFhkFPnt4QypCYz9pOLRXEu0uA-V-XCM-swiaSlesDGyTFWewYkb7miA726r4Ri_r7Q2c_pIRjRJg_N62j5w3yuZ53Sa8nWWhWHS74KqsZAnl7luWXPtRzbHy99G7nYQ3wNZr86gvmhQ0WrKQmnsaCBMP3TGEtauPPU6ZSzvol2t6J90oBakRmPaT7KlYKNWlA-amMXQQWb61XXEvaoy6jeE2XBLME7AcCWj9bVHhWO2w",
+        "dq": "HbhMz0pr2cz3fWoqTsUQjDgG4VHQGkFuANamQU81vpOnlwhTD38XEv_d9CGUHLMUWDYsr2tEBdME9fjS3lbjD4MQqQGzLhCo87zAqwcmwwBY_5WQPrqPJhnFpfFQ-zZSwz8PUqUtWkkgMbPEIk7Y9DP2TqXUczKjLXw6VnQMCZnVGm2vrZ7Xf7tXoGdB44pcW9a9UIP6Rgey3KIOUTjJH4LGy23PxtF6-8KR6YQIxrylVaCywOm3nTxOoC827FCdoPRzEzacEuX9VnEKmw9-MCc4fZPeieUs9vhMywN0QXInyto487Tia_c6t47no2ZTBKhxv6CpZTVm9GgKzHdsiw",
+        "qi": "SU5Gcmtyz39P0pVfMWYCaVvW43w8hoDPRFjrgPnv6LYtXxOKDNchBP0s7gtysdwqSKT23bxrkRyPQ1rFexzOGfbwelSVFC47JbmCrXLqUkGrSKlZHtpifldWfcxiEeuTyZQ2DB5gQMlyh9Ynh8SsLcmhuUW8A7sI1RMGZfj4prR0PitQophRJ2VJSKOtTv_PHMrfYmM3gvVeCf7LaxJdY4qetkW9R9q7wGCFBNq75OOBBiqI5uEuhzU2YaOoAGyPsj-GRxnsT6q94B32mb459d5EMn4yf0sz-E9G7fj2_yQaslxGKmrmy9msQbNiBcBjl7qvEumxYpaZ-MfPcvA7aw",
+        "p2s": ""
+    }
+    wallet = Wallet.from_data(wallet)
+    node = Node()
+    peer = Peer()
+    loader = Loader(node, peer, wallet)
+    indexer = BundleIndexer(loader)
+    import pdb; pdb.set_trace()
+    indexer.add_forward()
