@@ -422,7 +422,7 @@ class Peer(HTTPClient):
 
         headers = {
             'x-packing': packing,
-            'Range': 'bytes=0-3',
+            'Range': 'bytes=0-2',
         }
         if bucket_based_offset:
             headers['x-bucket-based-offset'] = '1'
