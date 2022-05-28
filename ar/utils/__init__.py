@@ -332,6 +332,19 @@ class ChunkStream(io.RawIOBase):
             self.offset = offset
             return
 
+        if offset <= 0:
+            self.chunk = None
+            self.chunk_first, self.chunk_last = self.chunks[0]
+            self.offset = self.stream_first
+            assert self.chunk_first == self.offset
+            return
+        elif offset > self.stream_last:
+            self.chunk = None
+            self.chunk_first, self.chunk_last = self.chunks[-1]
+            self.offset = self.stream_last + 1
+            assert self.chunk_last + 1 == self.offset
+            return
+
         def walk_left(nearest_idx):
             chunk_first, chunk_last = self.chunks[nearest_idx]
             additional = []

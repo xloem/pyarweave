@@ -68,7 +68,7 @@ class ANS104BundleHeader:
     def fromjson(cls, json):
         dataitems = (DataItem.fromjson(item) for item in json['items'])
         return cls({
-            dataitem.id: dataitem.get_len_bytes()
+            dataitem.header.id: dataitem.get_len_bytes()
             for dataitem in dataitems
         }, version=1)
 

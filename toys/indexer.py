@@ -371,14 +371,14 @@ class TableDoc:
             entry.set(hash_digits, block_raw, txid_raw, dataitem_raw)
         elif entry_type == self.DATA:
             subtable = TableDoc(
+                loader = self.remote_data.loader,
+                txcontent_to_digits = self.txcontent_to_digits,
                 size = self.remote_data.size,
                 item_count = self.remote_data.item_count,
-                item_size = self.remote_data.item_size,
-                loader = self.remote_data.loader,
                 parent = self
             )
-            subtable.set(*entry)
-            entry.set(hash_digits, block_raw, txid_raw, dataitem_raw)
+            subtable.set(entry[0], *entry[1]) # add back replaced entry
+            subtable.set(hash_digits, block_raw, txid_raw, dataitem_raw) # new entry
             entry = subtable
             entry_type = self.TABLE
         else:
