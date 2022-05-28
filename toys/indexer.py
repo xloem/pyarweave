@@ -16,7 +16,7 @@ from ar.utils import b64enc, b64dec, b64dec_if_not_bytes, utf8enc_if_not_bytes, 
 #       for including more records. For further compression, BLOCKHASH and TXHASH
 #       could be indexed for reuse.
 #
-# VERSION         1 byte = 1
+# not implemented: VERSION         1 byte = 1
 #
 # A sequence of 169 byte entries:
 #   TYPE          1 byte
@@ -63,6 +63,7 @@ from ar.utils import b64enc, b64dec, b64dec_if_not_bytes, utf8enc_if_not_bytes, 
 #   0 or TYPE_EMPTY
 #   1 or TYPE_TABLE: DATAITEMHASH is a table document with 1 greater DEPTH.
 #   2 or TYPE_DATA: DATAITEMHASH is a data document
+#   3 or TYPE_MANY: DATAITEMHASH is a table document tree where all children match.
 #
 # COUNT
 #   Count is the number of txhashes in a table, and is equal to the size divided by 97.
@@ -260,6 +261,7 @@ class BackedStructur:
 
     def __setitem__(self, index, value):
         offset = index * self.item_size
+        assert offset + self.item_size <= self.size
         shadow = self.get()
         if shadow[offset : offset + self.item_size] != value:
             shadow[offset : offset + self.item_size] = value
@@ -280,7 +282,7 @@ class BackedStructur:
     
     def get(self):
         if self.shadow is None:
-            self.shadow = bytearray(self.loader.data(self.id_raw, self.bundle_raw, self.block_raw))
+            self.shadow = bytearray(self.loader.data(b64enc(self.id_raw), b64enc(self.bundle_raw), b64enc(self.block_raw)))
         return self.shadow
 
     def flush(self):
@@ -292,9 +294,9 @@ class BackedStructur:
             if self._id_raw is not None:
                 tags.append(create_tag('Previous-Revision', b64enc(self._id_raw), True))
             if self._block_raw is not None:
-                tags.append(create_tag('Previous-Revision-Block', self.block, True))
+                tags.append(create_tag('Previous-Revision-Block', b64enc(self._block_raw), True))
             if self._bundle_raw is not None:
-                tags.append(create_tag('Previous-Revision-Bundle', self.bundle, True))
+                tags.append(create_tag('Previous-Revision-Bundle', b64enc(self._bundle_raw), True))
             id = self.loader.send(self.shadow, tags=tags)
             ar.logger.info(f'sent {id}.')
             self._id_raw = b64dec(id)
@@ -306,13 +308,15 @@ class TableDoc:
     EMPTY = 0
     TABLE = 1
     DATA = 2
+    MANY = 3
     _UNPROCESSED = 3
-    def __init__(self, loader, txcontent_to_digits, size = None, item_count = None, id_raw = None, dataitem_raw = None, block_raw = None, parent = None, additional_tags = []):
+    def __init__(self, loader, txcontent_to_digits, size = None, item_count = None, id_raw = None, dataitem_raw = None, block_raw = None, parent = None, additional_tags = [], type = TABLE):
         if dataitem_raw is None:
             bundle_raw = None
         else:
             bundle_raw = id_raw
             id_raw = dataitem_raw
+        self.type = type
         self.txcontent_to_digits = txcontent_to_digits
         self.remote_data = BackedStructur(loader, size = size, item_count = item_count, item_size = 97, additional_tags = additional_tags, id_raw = id_raw, bundle_raw = bundle_raw, block_raw = block_raw)
         if parent is None:
@@ -322,7 +326,10 @@ class TableDoc:
                 math.log(self.remote_data.item_count)
             )
         else:
-            self.depth = parent.depth + 1
+            if type == self.MANY:
+                self.depth = 0
+            else:
+                self.depth = parent.depth + 1
             self.total_height = parent.total_height
         self.obj_list = [
             (entry_raw[0], entry_raw[1:97])
@@ -337,19 +344,21 @@ class TableDoc:
             assert len(entry) == 112
             if entry_type == self.EMPTY:
                 entry = None
-            elif entry_type == self.TABLE:
+            elif entry_type == self.TABLE or entry_type == self.MANY:
                 block_raw = entry[:48]
                 txid_raw = entry[48:80]
                 dataitem_raw = entry[80:112]
                 entry = TableDoc(
                     size = self.remote_data.size,
                     item_count = self.remote_data.item_count,
-                    item_size = self.remote_data.item_size,
+                    #item_size = self.remote_data.item_size,
                     id_raw = dataitem_raw,
                     bundle_raw = txid_raw if dataitem_raw != txid_raw else ZEROS32,
                     block_raw = block_raw,
                     loader = self.remote_data.loader,
-                    parent = self
+                    txcontent_to_digits = self.txcontent_to_digits if type is self.TABLE else self.txids_to_digits,
+                    parent = self if type is self.TABLE else None,
+                    type = entry_type
                 )
             elif entry_type == self.DATA:
                 block_raw = entry[:48]
@@ -361,26 +370,60 @@ class TableDoc:
             self.obj_list[hash_digit] = (entry_type, entry)
         return entry_type, entry
 
-    def set(self, hash_digits, block_raw, txid_raw, dataitem_raw):
+    #def set(self, hash_digits, block_raw, txid_raw, dataitem_raw):
+    #    return self.add(hash_digits, block_raw, txid_raw, dataitem_raw, replace = True)
+
+    def add(self, hash_digits, block_raw, txid_raw, dataitem_raw):#, replace = False):
         hash_digit = hash_digits[self.depth]
         entry_type, entry = self.get_filling_if_needed(hash_digit)
+        if entry_type == self.MANY:
+            # it's already a table
+            # get 1 item from it, and compare the digits.
+            example_digits, *example_ids = next(iter(entry))
+            if example_digits == hash_digits:
+                # if they are same, add this one.
+                entry.add(hash_digits, block_raw, txid_raw, dataitem_raw)
+            else:
+                # if they differ, add a table.
+                subtable = TableDoc(
+                    loader = self.remote_data.loader,
+                    txcontent_to_digits = self.txcontent_to_digits,
+                    size = self.remote_data.size,
+                    item_count = self.remote_data.item_count,
+                    parent = self
+                )
+                example_digit = example_digits[subtable.depth]
+                subtable.obj_list[example_digit] = (entry_type, entry) # replaced entry
+                subtable.add(hash_digits, block_raw, txid_raw, dataitem_raw) # new entry
+                entry = subtable
+                entry_type = self.TABLE
         if entry_type == self.EMPTY:
             entry_type, entry = (self.DATA, (hash_digits, (block_raw, txid_raw, dataitem_raw)))
             self.count += 1
         elif entry_type == self.TABLE:
-            entry.set(hash_digits, block_raw, txid_raw, dataitem_raw)
+            entry.add(hash_digits, block_raw, txid_raw, dataitem_raw)
         elif entry_type == self.DATA:
-            subtable = TableDoc(
+            entry_digits, entry_ids = entry
+            if entry_digits == hash_digits:
+                entry_type = self.MANY
+                parent = None
+                txcontent_to_digits = self.txids_to_digits
+                hash_digits = txcontent_to_digits(dataitem_raw, txid_raw, block_raw)
+                entry_digits = txcontent_to_digits(*entry_ids)
+            else:
+                entry_type = self.TABLE
+                parent = self
+                txcontent_to_digits = self.txcontent_to_digits
+            entry = TableDoc(
                 loader = self.remote_data.loader,
-                txcontent_to_digits = self.txcontent_to_digits,
+                txcontent_to_digits = txcontent_to_digits,
                 size = self.remote_data.size,
                 item_count = self.remote_data.item_count,
-                parent = self
+                parent = parent,
+                type = entry_type
             )
-            subtable.set(entry[0], *entry[1]) # add back replaced entry
-            subtable.set(hash_digits, block_raw, txid_raw, dataitem_raw) # new entry
-            entry = subtable
-            entry_type = self.TABLE
+            entry.add(entry_digits, *entry_ids) # add back replaced entry
+            entry.add(hash_digits, block_raw, txid_raw, dataitem_raw) # new entry
         else:
             raise StructureException('unhandled table entry type', type)
         self.obj_list[hash_digit] = (entry_type, entry)
@@ -393,7 +436,9 @@ class TableDoc:
         elif entry_type == self.TABLE:
             return entry.get(hash_digits)
         elif entry_type == self.DATA:
-            return entry[1]
+            return [entry[1]]
+        elif entry_type == self.MANY:
+            return [*entry]
         else:
             raise StructureException('unhandled table entry type', type)
 
@@ -438,7 +483,15 @@ class TableDoc:
         txid_raw = b64dec_if_not_bytes(txid)
         dataitem_raw = b64dec_if_not_bytes(dataitem)
         digits = self.hash_to_digits(hash)
-        self.set(digits, block_raw, txid_raw, dataitem_raw)
+        self.add(digits, block_raw, txid_raw, dataitem_raw)
+
+    def __iter__(self):
+        for idx, (entry_type, entry) in enumerate(self.obj_list):
+            if entry_type == self.DATA:
+                yield self.get_filling_if_needed(idx)[1]
+        for idx, (entry_type, entry) in enumerate(self.obj_list):
+            if entry_type in (self.TABLE, self.MANY):
+                yield from self.get_filling_if_needed(idx)[1]
 
     def __enter__(self):
         return self
@@ -454,6 +507,10 @@ class TableDoc:
             hash_int, digit = divmod(hash_int, self.remote_data.item_count)
             digits.append(digit)
         return digits
+
+    def txids_to_digits(self, dataitem_raw, txid_raw, block_raw):
+        hash = hashlib.sha256(dataitem_raw + txid_raw + block_raw)
+        return self.hash_to_digits(hash)
 
 class HashMap(TableDoc):
     def __init__(self, txcontent_to_digits, size, id = None, block = None, dataitem = None, loader = None, tags = {}):
@@ -496,14 +553,16 @@ class BundleIndexer:
         if id is not None:
             id_raw = b64dec_if_not_bytes(id)
             tags = [tag for tag in loader.tags(id, bundle, block) if tag['name'] not in (b'Application', b'Previous-Revision')]
-            if 'Block-Min' in tags_dict:
-                self.prev_block = tags_dict[b'Block-Min'] - 1
-                if 'Block-Max' in tags_dict:
-                    self.next_block = tags_dict[b'Block-Max'] + 1
+            tagsblockmin = get_tags(tags, 'Block-Min')
+            tagsblockmax = get_tags(tags, 'Block-Max')
+            if tagsblockmin:
+                self.prev_block = min((int(i) for i in tagsblockmin)) - 1
+                if tagsblockmax:
+                    self.next_block = max((int(i) for i in tagsblockmax)) + 1
                 else:
                     self.next_block = self.prev_block + 2
-            elif 'Block-Max' in tags_dict:
-                self.next_block = tags_dict[b'Block-Max'] + 1
+            elif tagsblockmax:
+                self.next_block = max((int(i) for i in tagsblockmax)) + 1
                 self.prev_block = self.next_block - 2
             else:
                 self.prev_block = start_block
@@ -515,8 +574,9 @@ class BundleIndexer:
             self.prev_block = start_block
             self.next_block = start_block
         self.root = TableDoc(loader, self.txcontent_to_digits, size=size, id_raw = id_raw, additional_tags = tags)
-    def txcontent_to_digits(self, txid_raw):
-        self.remote_data.add()
+    def txcontent_to_digits(self, dataitem_raw, txid_raw, block_raw):
+        #self.remote_data.add()
+        return self.root.hash_to_digits(dataitem_raw)
     def add_forward(self):
             loader = self.root.remote_data.loader
         #with self.root:
@@ -848,7 +908,8 @@ if __name__ == '__main__':
     while True:
         indexer.add_forward()
         now = time.time()
-        if now - then > 60*60:
+        #if True:
+        if now - then > 60*15:
             then = now
             indexer.save()
             print(indexer.root.ids)

@@ -330,27 +330,27 @@ class ChunkStream(io.RawIOBase):
 
         if offset >= self.chunk_first and offset <= self.chunk_last:
             self.offset = offset
-            return
+            return self.offset - self.stream_first
 
         if offset <= 0:
             self.chunk = None
             self.chunk_first, self.chunk_last = self.chunks[0]
             self.offset = self.stream_first
             assert self.chunk_first == self.offset
-            return
+            return self.offset - self.stream_first
         elif offset > self.stream_last:
             self.chunk = None
             self.chunk_first, self.chunk_last = self.chunks[-1]
             self.offset = self.stream_last + 1
             assert self.chunk_last + 1 == self.offset
-            return
+            return self.offset - self.stream_first
 
         def walk_left(nearest_idx):
             chunk_first, chunk_last = self.chunks[nearest_idx]
             additional = []
             while chunk_first > offset:
                 chunk_last = chunk_first - 1 # needed so chunk_size gets the _earlier_ chunk
-                logger.info(f'Requesting bounds of chunk before {chunk_first - self.stream_first} to find {offset - self.stream_first}...')
+                logger.info(f'{self.stream_first}: Requesting bounds of chunk before {chunk_first - self.stream_first} to find {offset - self.stream_first}...')
                 chunk_first = chunk_last - self.peer.chunk_size(chunk_last) + 1
                 additional.append((chunk_first, chunk_last))
             self.chunks[nearest_idx : nearest_idx] = additional
@@ -361,7 +361,7 @@ class ChunkStream(io.RawIOBase):
             additional = []
             while chunk_last < offset:
                 chunk_first = chunk_last + 1 # needed so chunk_size gets the _next_ chunk
-                logger.info(f'Requesting bounds of chunk after {chunk_last - self.stream_first} to find {offset - self.stream_first}...')
+                logger.info(f'{self.stream_first}: Requesting bounds of chunk after {chunk_last - self.stream_first} to find {offset - self.stream_first}...')
                 chunk_last = chunk_first + self.peer.chunk_size(chunk_first) - 1
                 nearest_idx += 1
                 additional.append((chunk_first, chunk_last))
@@ -390,6 +390,7 @@ class ChunkStream(io.RawIOBase):
         self.chunk_first = chunk_first
         self.chunk_last = chunk_last
         self.offset = offset
+        return self.offset - self.stream_first
 
     def readinto(self, b):
         if self.chunk is None:
