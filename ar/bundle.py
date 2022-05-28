@@ -5,7 +5,7 @@ import fastavro
 from Crypto.Hash import SHA256
 from Crypto.Random import get_random_bytes
 
-from .utils import b64dec, b64enc, b64dec_if_not_bytes, b64enc_if_not_str, le_u256enc, le_u256dec, encode_tag, decode_tag, normalize_tag
+from .utils import b64dec, b64enc, b64dec_if_not_bytes, b64enc_if_not_str, le_u256enc, le_u256dec, encode_tag, decode_tag, normalize_tag, tags_to_dict
 from .utils.deep_hash import deep_hash
 from .utils.ans104_signers import DEFAULT as DEFAULT_SIGNER, BY_TYPE as SIGNERS_BY_TYPE
 
@@ -57,7 +57,7 @@ class ANS104BundleHeader:
 
     @classmethod
     def from_tags_stream(cls, tags, stream):
-        fmt = tags[b'Bundle-Format']
+        fmt = tags_to_dict(tags).get(b'Bundle-Format')
         if fmt == b'json':
             return cls.fromjson(json.load(stream))
         elif fmt == b'binary':
