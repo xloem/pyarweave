@@ -94,6 +94,8 @@ def le_u256enc(valu):
         (value >> 192) & 0xffffffffffffffff
     )
 
+# all this tags stuff could be a Tags class
+
 def create_tag(name, value, v2):
     b64name = utf8enc_if_not_bytes(name)
     b64value = utf8enc_if_not_bytes(value)
@@ -134,6 +136,34 @@ def dict_to_tags(tags_dict):
         create_tag(key, value)
         for key, value in tags_dict.items()
     ]
+
+def change_tag(tags, name, value):
+    name = utf8enc_if_not_bytes(name)
+    newvalue = utf8enc_if_not_bytes(value)
+    to_change = None
+    for tag in tags:
+        if tag['name'] == name:
+            if to_change is not None:
+                raise Exception('more than one tag with name')
+            to_change = tag
+    if to_change is not None:
+        to_change['value'] = newvalue
+    else:
+        tags.append(create_tag(name, newvalue, True))
+    return tags
+
+def ensure_tag(tags, name, value):
+    name = utf8enc_if_not_bytes(name)
+    value = utf8enc_if_not_bytes(value)
+    for tag in tags:
+        if tag['name'] == name and tag['value'] == value:
+            return tags
+    tags.append(dict(name=name, value=value))
+    return tags
+
+def get_tags(tags, name):
+    name = utf8enc_if_not_bytes(name)
+    return [tag['value'] for tag in tags if tag['name'] == name]
 
 def owner_to_address(owner):
     result = b64enc(hashlib.sha256(b64dec(utf8enc_if_not_bytes(owner))).digest())
