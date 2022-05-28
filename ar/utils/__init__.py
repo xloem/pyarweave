@@ -99,7 +99,7 @@ def create_tag(name, value, v2):
     b64value = utf8enc_if_not_bytes(value)
     if not v2:
         b64name = b64enc(b64name)
-        b64value = b64enc(b64name)
+        b64value = b64enc(b64value)
 
     return {'name': b64name, 'value': b64value}
 
