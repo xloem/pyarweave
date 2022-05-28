@@ -6,6 +6,13 @@ import json
 from . import DEFAULT_API_URL, logger, ArweaveException, ArweaveNetworkException
 from .utils import response_stream_to_file_object, b64dec, arbindec, ChunkStream
 
+def binary_to_term(b):
+    # arweave.live seems to replace nonascii chars with this sequence :/
+    # occasionally things will work if it's turned back into the etf byte
+    if b[:3] == b'\xef\xbf\xbd':
+        b = b.replace(b'\xef\xbf\xbd', b'\x83')
+    return erlang.binary_to_term(b)
+
 class HTTPClient:
     def __init__(self, api_url, timeout = None, retries = 5):
         self.api_url = api_url
@@ -26,12 +33,12 @@ class HTTPClient:
         try:
             response.raise_for_status()
             if int(response.headers.get('content-length', 1)) == 0:
-                raise ArweaveException('Empty response.')
+                raise ArweaveException(f'Empty response from {url}')
             if response.status_code not in (200, 206):
                 raise ArweaveException(response.text)
             return response
         except requests.exceptions.RequestException as exc:
-            logger.error(response.text)
+            logger.error(exc, response.text)
             raise ArweaveNetworkException(response.text, exc, response)
 
     def _post(self, data, *params, headers = {}, **request_kwparams):
@@ -57,10 +64,12 @@ class HTTPClient:
 
         try:
             response.raise_for_status()
+            if int(response.headers.get('content-length', 1)) == 0:
+                raise ArweaveException(f'Empty response from {url}')
             # logger.debug('RESPONSE 200: {}'.format(response.text))
             return response
         except requests.exceptions.RequestException as exc:
-            logger.error('{}\n\n{}'.format(response.text, data))
+            logger.error('{}\n{}\n\n{}'.format(exc,response.text, data))
             raise ArweaveNetworkException(response.text, exc, response)
 
 class Peer(HTTPClient):
@@ -107,12 +116,12 @@ class Peer(HTTPClient):
             for height in range(self.height(), 0, -1):
                 tx = self.block_height(height)['txs'][0]
                 try:
-                    stream = self.stream(tx, range = (0,4))
+                    stream = self.gateway_stream(tx, range = (0,4))
                     data = stream.read(8)
                     if len(data) == 8:
                         partial_data = False
                     else:
-                        stream = self.stream(tx)
+                        stream = self.gateway_stream(tx)
                         data = stream.read(8)
                         if len(data) == 8:
                             partial_data = True
@@ -127,7 +136,7 @@ class Peer(HTTPClient):
 
         def peers():
             health = status.get('health')
-            if health is not None:
+            if health is not None and 'origins' in health:
                 status['peers'] = [origin['endpoint'].split('://',1)[1] for origin in health['origins']]
                 raise ArweaveNetworkException()
             else:
@@ -232,7 +241,12 @@ class Peer(HTTPClient):
 
     def tx2(self, txid):
         '''Return a binary-encoded transaction.'''
-        response = self._get('tx2', txid)
+        response = self._get('tx2', txid)#, stream = True)
+        #with response_stream_to_file_object(response) as stream:
+        #    size = int.from_bytes(stream.read(3), 'big')
+        #    format = stream.read(1)[0]
+        #    txid_raw = stream.read(32)
+        #    last_tx = arbindec(stream, 
         return response.content
 
     def unconfirmed_tx(self, txid):
@@ -302,7 +316,7 @@ class Peer(HTTPClient):
         every value - the percentage of data synced in the reported bucket.
         '''
         response = self._get('sync_buckets')
-        return erlang.binary_to_term(response.content)
+        return binary_to_term(response.content)
 
     def data_sync_record(self, start = None, limit = None, format = 'etf'):
         '''
@@ -336,9 +350,10 @@ class Peer(HTTPClient):
             except json.decoder.JSONDecodeError:
                 # some proxies, such as arweave.net 2022-05, ignore the header and return etf
                 pass
-        intervals = erlang.binary_to_term(response.content)
+        intervals = binary_to_term(response.content)
+                
         intervals = [
-            (int.from_bytes(left.value, 32, 'big'), int.from_bytes(right.value, 32, 'big'))
+            (int.from_bytes(left.value, 'big'), int.from_bytes(right.value, 'big'))
             for left, right in intervals
         ]
         return intervals
@@ -453,6 +468,10 @@ class Peer(HTTPClient):
         return result
 
     def send_chunk(self, json_data):
+        # NOTE: this can take two headers
+        # arweave-data-root: 43 encoded bytes
+        # arweave-data-size: integer
+        # i'm guessing these are used to quickly discard data that does not match the server
         '''
         Upload Data Chunks
 
@@ -465,8 +484,8 @@ class Peer(HTTPClient):
           "offset": "<a number from [start_offset, start_offset + chunk size), relative to other chunks>"
         }
         '''
-        response = self._post(json_data, 'chunk')
-        return response.json()
+        response = self._post(json_data, 'chunk', headers={'arweave-data-root':json_data['data_root'],'arweave-data-size':int(json_data['data_size'])})
+        return response.text # OK
 
     def block_announcement(self, block_announcement):
         '''
@@ -801,7 +820,10 @@ class Peer(HTTPClient):
                         tag[key] = b64dec(tag[key].encode())
                 return tags
             else:
-                return response.json()
+                try:
+                    return response.json()
+                except json.decoder.JSONDecodeError:
+                    return response.text
 
     def tx_id(self, hash):
         '''Return transaction id.'''
@@ -874,7 +896,24 @@ class Peer(HTTPClient):
 
         return response.content
 
-    def stream(self, txid, ext = '', range = None):
+    def stream(self, txid, range = None):
+        try:
+            return self.peer_stream(txid, range=range)
+        except Exception:
+            if reupload(self, txid):
+                return self.gateway_stream(txid, range=range)
+            else:
+                raise
+
+    def gateway_stream(self, txid, ext ='', range = None):
+        if range is not None:
+            headers = {'Range':f'bytes={range[0]}-{range[1]}'}
+        else:
+            headers = {}
+        response = self._get(txid + ext, headers = headers, stream = True)
+        return response_stream_to_file_object(response)
+
+    def peer_stream(self, txid, range = None):
         if range is not None:
             return io.BufferedReader(ChunkStream.from_txid(self, txid, range[0], range[1]-range[0]), 0x40000)
         else:
@@ -963,3 +1002,27 @@ class Peer(HTTPClient):
     def cache_jobs(self):
         response = self._get('cache', 'jobs')
         return response.json()
+
+from ar.utils.merkle import compute_root_hash, generate_transaction_chunks
+from ar.utils import b64enc
+def reupload(peer, tx):
+    stream = peer.gateway_stream(tx)
+
+    chunks = generate_transaction_chunks(stream)
+    if chunks['data_root'] != peer.tx_data_root(tx):
+        logger.error(f'{peer.api_url}: Data for {tx} mismatches generated root.')
+        return False
+    logger.warning(f'uhh trying to reupload {txid}')
+    offset = 0
+    for proof, chunk in zip(chunks['proofs'], chunks['chunks']):
+        chunk_size = chunk.data_size
+        chunk = {
+            'data_root': b64enc(chunks['data_root']),
+            'data_size': str(chunks['chunks'][-1].max_byte_range),
+            'data_path': b64enc(proof.proof),
+            'offset': str(proof.offset),
+            'chunk': b64enc(data[offset:offset+chunk_size])
+        }
+        peer.send_chunk(chunk)
+        offset+=chunk_size
+    return True
