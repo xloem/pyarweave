@@ -1,6 +1,6 @@
 import time
 
-from ar import Peer, ArweaveException, ANS104BundleHeader, Bundle, DataItem
+from ar import Peer, ArweaveNetworkException, ArweaveException, ANS104BundleHeader, Bundle, DataItem
 from bundlr import Node
 
 class BundleWatcher:
@@ -29,7 +29,8 @@ class BundleWatcher:
                 if any((tag['name'].startswith(b'Bundle') for tag in tags)):
                     try:
                         stream = self.peer.stream(txid)
-                    except ArweaveException:
+                    except ArweaveException as exc:
+                        #print(exc)
                         missing_txs.add(txid)
                         continue
                     missing_txs.discard(txid)
@@ -37,7 +38,11 @@ class BundleWatcher:
                         #header = ANS104Header.from_tags_stream(tags, stream)
                         #header.data = lambda: Bundle.from_tags_stream(tags, stream)# get individual item
                         #yield from Bundle.from_tags_stream(tags, stream).dataitems
-                        yield from DataItem.all_from_tags_stream(tags, stream)
+                        try:
+                            yield from DataItem.all_from_tags_stream(tags, stream)
+                        except ArweaveNetworkException as exc:
+                            missing_txs.add(Txid)
+                            continue
                     #headers = 
                     #print(txid)
             old_block_txs = new_block_txs
@@ -50,4 +55,4 @@ class BundleWatcher:
                 mark = now
 
 for item in BundleWatcher().run():
-    print(item.header.id, item.header.tags)
+    print('bundled', item.header.id, item.header.tags)

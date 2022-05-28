@@ -1,8 +1,11 @@
-import math
+import math, os, time
+
+import json
 
 import ar
+#import ar.multipeer
 
-from ar.utils import b64enc, b64dec, b64dec_if_not_bytes, utf8enc_if_not_bytes, create_tag, tags_to_dict
+from ar.utils import b64enc, b64dec, b64dec_if_not_bytes, utf8enc_if_not_bytes, create_tag, change_tag, ensure_tag, get_tags
 
 ## HashMap
 
@@ -199,15 +202,19 @@ class BackedStructur:
                     }
                 }''')['data']['transaction']
             if result is None:
-                ar.logger.info(f'Waiting for {b64enc(id_raw)} to propagate ...')
+                ar.logger.info(f'Waiting for {b64enc(self._id_raw)} to propagate ...')
                 time.sleep(30)
                 return self.bundle_raw
             bundledIn = result['bundledIn']
+            block = result['block']
+            if bundledIn is None and block is None:
+                ar.logger.info(f'Waiting for {b64enc(self._id_raw)} to be mined ...')
+                time.sleep(30)
+                return self.bundle_raw
             if bundledIn is None:
                 self._bundle_raw = ZEROS32
             else:
                 self._bundle_raw = b64dec(bundledIn['id'])
-            block = result['block']
             if block is None:
                 self._block_raw = None
             else:
@@ -220,15 +227,21 @@ class BackedStructur:
             bundle_raw = self.bundle_raw
         if self._block_raw is None:
             id_raw = self._id_raw if bundle_raw == ZEROS32 else bundle_raw
-            result = self.loader.graphql('''
+            interim_result = self.loader.graphql('''
                 query {
-                    transaction(id: "{'''+b64enc(self._id_raw)+'''}") {
+                    transaction(id: "'''+b64enc(id_raw)+'''") {
                         block { id }
                     }
-                }''')['data']['transaction']
+                }''')
+            result = interim_result['data']['transaction']
+            if result is None:
+                #import pdb; pdb.set_trace()
+                ar.logger.info(f'Waiting for {b64enc(id_raw)} to propagate ...')
+                time.sleep(30)
+                return self.block_raw
             block = result['block']
             if block is None:
-                logger.info(f'Waiting for {b64enc(id_raw)} to be mined ...')
+                ar.logger.info(f'Waiting for {b64enc(id_raw)} to be mined ...')
                 time.sleep(30)
                 return self.block_raw
             else:
@@ -277,11 +290,11 @@ class BackedStructur:
                 create_tag('Application', 'HashMap', True),
             ]
             if self._id_raw is not None:
-                tags.append(create_tag('Previous-Revision', self.id))
+                tags.append(create_tag('Previous-Revision', b64enc(self._id_raw), True))
             if self._block_raw is not None:
-                tags.append(create_tag('Previous-Revision-Block', self.block))
+                tags.append(create_tag('Previous-Revision-Block', self.block, True))
             if self._bundle_raw is not None:
-                tags.append(create_tag('Previous-Revision-Bundle', self.bundle))
+                tags.append(create_tag('Previous-Revision-Bundle', self.bundle, True))
             id = self.loader.send(self.shadow, tags=tags)
             ar.logger.info(f'sent {id}.')
             self._id_raw = b64dec(id)
@@ -315,6 +328,7 @@ class TableDoc:
             (entry_raw[0], entry_raw[1:97])
             for entry_raw in self.remote_data
         ]
+        self.count = sum((type != self.EMPTY for type, entry in self.obj_list))
 
     def get_filling_if_needed(self, hash_digit):
         entry = self.obj_list[hash_digit]
@@ -352,6 +366,7 @@ class TableDoc:
         entry_type, entry = self.get_filling_if_needed(hash_digit)
         if entry_type == self.EMPTY:
             entry_type, entry = (self.DATA, (hash_digits, (block_raw, txid_raw, dataitem_raw)))
+            self.count += 1
         elif entry_type == self.TABLE:
             entry.set(hash_digits, block_raw, txid_raw, dataitem_raw)
         elif entry_type == self.DATA:
@@ -383,6 +398,11 @@ class TableDoc:
             raise StructureException('unhandled table entry type', type)
 
     def flush(self):
+        #import pdb; pdb.set_trace()
+        if self.remote_data.id_raw is None:
+            print('flushing new tabledoc')
+        else:
+            print('flushing tabledoc', b64enc(self.remote_data.id_raw))
         with self.remote_data:
             for idx, (entry_type, entry) in enumerate(self.obj_list):
                 if type(entry) is bytes:
@@ -394,6 +414,13 @@ class TableDoc:
                 elif entry_type == self.DATA:
                     entry = b''.join(entry[1])
                 self.remote_data[idx] = bytes([entry_type]) + entry
+
+    @property
+    def ids(self):
+        if self.count == 0:
+            return None
+        self.flush()
+        return self.remote_data.ids
 
     @property
     def raw_ids(self):
@@ -437,9 +464,35 @@ class HashMap(TableDoc):
         dataitem_raw = b64dec_if_not_bytes(dataitem)
         super().__init__(txcontent_to_digits, size = size, item_count = None, id_raw = id_raw, block_raw = block_raw, dataitem_raw = dataitem_raw, loader = loader)
 
+from ar.utils.merkle import compute_root_hash, generate_transaction_chunks
+def reupload(peer, tx):
+    data = peer.data(tx)
+
+    chunks = generate_transaction_chunks(io.BytesIO(data))
+    offset = 0
+    for proof, chunk in zip(chunks['proofs'], chunks['chunks']):
+        chunk_size = chunk.data_size
+        chunk = {
+            'data_root': b64enc(chunks['data_root']).decode(),
+            'data_size': str(len(data)),
+            'data_path': b64enc(proof.proof),
+            'offset': str(proof.offset),
+            'chunk': b64enc(data[offset:offset+chunk_size])
+        }
+        peer.send_chunk(chunk)
+        offset+=chunk_size
+
+
 from ar import ANS104BundleHeader
 class BundleIndexer:
-    def __init__(self, loader, id = None, bundle = None, block = None, start_block = 761917, size = 100000):
+    def __init__(self, loader, filename, id = None, bundle = None, block = None, start_block = 761917, size = 100000):
+        self.filename = filename
+        if os.path.exists(filename):
+            with open(filename) as file:
+                metadata = json.load(file)
+            id = metadata['id']
+            bundle = metadata['bundle']
+            block =metadata['block']
         if id is not None:
             id_raw = b64dec_if_not_bytes(id)
             tags = [tag for tag in loader.tags(id, bundle, block) if tag['name'] not in (b'Application', b'Previous-Revision')]
@@ -465,18 +518,34 @@ class BundleIndexer:
     def txcontent_to_digits(self, txid_raw):
         self.remote_data.add()
     def add_forward(self):
-        loader = self.root.remote_data.loader
-        with self.root:
+            loader = self.root.remote_data.loader
+        #with self.root:
             block = loader.block_height(self.next_block)
             for tx in block['txs']:
-                header = ANS104BundleHeader.from_tags_stream(loader.tx_tags(tx), loader.stream(tx))
-                if header is None:
+                tx_tags = loader.tx_tags(tx)
+                if not get_tags(tx_tags, b'Bundle-Format'):
                     continue
+                #try:
+                header = ANS104BundleHeader.from_tags_stream(tx_tags, loader.stream(tx))
+                #except ar.ArweaveNetworkException:
+                #    ensure_tag(self.root.remote_data.additional_tags, b'Block-Missing-Data', block['indep_hash'])
+                #if header is None:
+                #    continue
                 for bundled_id in header.length_by_id.keys():
                     self.root[bundled_id] = (tx, block['indep_hash'], bundled_id)
-            tags_dict = tags_to_dict(self.root.remote_data.additional_tags)
-            tags_dict[b'Block-Max'] = self.next_block
+            change_tag(self.root.remote_data.additional_tags, 'Block-Max', str(self.next_block))
             self.next_block += 1
+    def save(self):
+        id, bundle, block = self.root.ids
+        with open(self.filename + '.new', 'wt') as file:
+            json.dump({
+                'id': id,
+                'bundle': bundle,
+                'block': block
+            }, file)
+        os.rename(self.filename + '.new', self.filename)
+    def __del__(self):
+        self.root.flush()
 
 #class TableDoc(BackedStructure):
 #        super().__init__(size = size, item_count = item_count, item_size = 33, id_raw = id_raw, loader = loader)
@@ -771,8 +840,15 @@ if __name__ == '__main__':
     }
     wallet = Wallet.from_data(wallet)
     node = Node()
-    peer = Peer()
+    peer = Peer()#ar.multipeer.MultiPeer()
     loader = Loader(node, peer, wallet)
-    indexer = BundleIndexer(loader)
-    import pdb; pdb.set_trace()
-    indexer.add_forward()
+    indexer = BundleIndexer(loader, 'arweave-index.json')
+    #import pdb; pdb.set_trace()
+    then = time.time()
+    while True:
+        indexer.add_forward()
+        now = time.time()
+        if now - then > 60*60:
+            then = now
+            indexer.save()
+            print(indexer.root.ids)
