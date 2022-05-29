@@ -1,4 +1,4 @@
-import math, os, time
+import hashlib, math, os, time
 
 import json
 
@@ -18,7 +18,8 @@ from ar.utils import b64enc, b64dec, b64dec_if_not_bytes, utf8enc_if_not_bytes, 
 #
 # not implemented: VERSION         1 byte = 1
 #
-# A sequence of 169 byte entries:
+# A sequence of 113 byte entries:
+####### note, it would be more efficient to retrieve tx tags and sigs if the 2-byte index in the alphabetized block were here
 #   TYPE          1 byte
 #   BLOCKHASH    48 bytes
 #   TXHASH       32 bytes
@@ -66,7 +67,7 @@ from ar.utils import b64enc, b64dec, b64dec_if_not_bytes, utf8enc_if_not_bytes, 
 #   3 or TYPE_MANY: DATAITEMHASH is a table document tree where all children match.
 #
 # COUNT
-#   Count is the number of txhashes in a table, and is equal to the size divided by 97.
+#   Count is the number of txhashes in a table, and is equal to the size divided by 113.
 #
 # DEPTH
 #   Depth reflects which part of a hash the table document relates to.
@@ -181,7 +182,7 @@ class BackedStructur:
         return b64enc(self.id_raw), b64enc(self.bundle_raw), b64enc(self.block_raw)
 
     @property
-    def ids_raw(Self):
+    def ids_raw(self):
         txid_raw = self.bundle_raw if self.bundle_raw != ZEROS32 else self.id_raw
         return self.block_raw + txid_raw + self.id_raw
 
@@ -257,11 +258,12 @@ class BackedStructur:
 
     def __getitem__(self, index):
         offset = index * self.item_size
-        return self.get()[offset : offset + self.item_size]
+        return bytes(self.get()[offset : offset + self.item_size])
 
     def __setitem__(self, index, value):
         offset = index * self.item_size
         assert offset + self.item_size <= self.size
+        assert len(value) == self.item_size
         shadow = self.get()
         if shadow[offset : offset + self.item_size] != value:
             shadow[offset : offset + self.item_size] = value
@@ -273,9 +275,10 @@ class BackedStructur:
     def __iter__(self):
         shadow = self.get()
         for offset in range(0, self.size, self.item_size):
-            yield shadow[offset : offset + self.item_size]
+            yield bytes(shadow[offset : offset + self.item_size])
 
     def append(self, value):
+        assert len(value) == self.item_size
         self.item_count += 1
         self.dirty = True
         self.shadow += value
@@ -283,13 +286,17 @@ class BackedStructur:
     def get(self):
         if self.shadow is None:
             self.shadow = bytearray(self.loader.data(b64enc(self.id_raw), b64enc(self.bundle_raw), b64enc(self.block_raw)))
+            self.size = len(self.shadow)
         return self.shadow
 
     def flush(self):
         if self.dirty:
+            assert len(self.shadow) == self.size
             tags = [
                 *self.additional_tags,
                 create_tag('Application', 'HashMap', True),
+                create_tag('Item-Size', str(self.item_size), True),
+                create_tag('Item-Count', str(self.item_count), True)
             ]
             if self._id_raw is not None:
                 tags.append(create_tag('Previous-Revision', b64enc(self._id_raw), True))
@@ -297,8 +304,9 @@ class BackedStructur:
                 tags.append(create_tag('Previous-Revision-Block', b64enc(self._block_raw), True))
             if self._bundle_raw is not None:
                 tags.append(create_tag('Previous-Revision-Bundle', b64enc(self._bundle_raw), True))
+            assert len(self.shadow) == self.size
             id = self.loader.send(self.shadow, tags=tags)
-            ar.logger.info(f'sent {id}.')
+            ar.logger.info(f'sent {id} with tags {tags}.')
             self._id_raw = b64dec(id)
             self._bundle_raw = None
             self._block_raw = None
@@ -309,16 +317,16 @@ class TableDoc:
     TABLE = 1
     DATA = 2
     MANY = 3
-    _UNPROCESSED = 3
+
     def __init__(self, loader, txcontent_to_digits, size = None, item_count = None, id_raw = None, dataitem_raw = None, block_raw = None, parent = None, additional_tags = [], type = TABLE):
-        if dataitem_raw is None:
+        if dataitem_raw is None or dataitem_raw == id_raw:
             bundle_raw = None
         else:
             bundle_raw = id_raw
             id_raw = dataitem_raw
         self.type = type
         self.txcontent_to_digits = txcontent_to_digits
-        self.remote_data = BackedStructur(loader, size = size, item_count = item_count, item_size = 97, additional_tags = additional_tags, id_raw = id_raw, bundle_raw = bundle_raw, block_raw = block_raw)
+        self.remote_data = BackedStructur(loader, size = size, item_count = item_count, item_size = 113, additional_tags = additional_tags, id_raw = id_raw, bundle_raw = bundle_raw, block_raw = block_raw)
         if parent is None:
             self.depth = 0
             self.total_height = math.ceil(
@@ -332,7 +340,7 @@ class TableDoc:
                 self.depth = parent.depth + 1
             self.total_height = parent.total_height
         self.obj_list = [
-            (entry_raw[0], entry_raw[1:97])
+            (entry_raw[0], entry_raw[1:113])
             for entry_raw in self.remote_data
         ]
         self.count = sum((type != self.EMPTY for type, entry in self.obj_list))
@@ -340,7 +348,7 @@ class TableDoc:
     def get_filling_if_needed(self, hash_digit):
         entry = self.obj_list[hash_digit]
         entry_type, entry = entry
-        if type(entry) is bytes:
+        if isinstance(entry, (bytes, bytearray)):
             assert len(entry) == 112
             if entry_type == self.EMPTY:
                 entry = None
@@ -352,8 +360,8 @@ class TableDoc:
                     size = self.remote_data.size,
                     item_count = self.remote_data.item_count,
                     #item_size = self.remote_data.item_size,
-                    id_raw = dataitem_raw,
-                    bundle_raw = txid_raw if dataitem_raw != txid_raw else ZEROS32,
+                    dataitem_raw = dataitem_raw,
+                    id_raw = txid_raw,
                     block_raw = block_raw,
                     loader = self.remote_data.loader,
                     txcontent_to_digits = self.txcontent_to_digits if type is self.TABLE else self.txids_to_digits,
@@ -364,7 +372,7 @@ class TableDoc:
                 block_raw = entry[:48]
                 txid_raw = entry[48:80]
                 dataitem_raw = entry[80:112]
-                entry = (self.txcontent_to_digits(utf8enc(dataitem_raw), utf8enc(txid_raw), utf8enc(block_raw)), (block_raw, txid_raw, dataitem_raw))
+                entry = (self.txcontent_to_digits(dataitem_raw, txid_raw,block_raw), (block_raw, txid_raw, dataitem_raw))
             else:
                 raise StructureException('unhandled table entry type', type)
             self.obj_list[hash_digit] = (entry_type, entry)
@@ -449,13 +457,16 @@ class TableDoc:
         else:
             print('flushing tabledoc', b64enc(self.remote_data.id_raw))
         with self.remote_data:
+            for entry_type, entry in self.obj_list:
+                if type(entry) is self.__class__:
+                    entry.flush()
             for idx, (entry_type, entry) in enumerate(self.obj_list):
-                if type(entry) is bytes:
-                    pass
+                if isinstance(entry, (bytes, bytearray)):
+                    continue
                 if entry_type == self.EMPTY:
                     pass
-                elif entry_type == self.TABLE:
-                    entry = b''.join(entry)
+                elif entry_type in (self.TABLE, self.MANY):
+                    entry = entry.raw_ids
                 elif entry_type == self.DATA:
                     entry = b''.join(entry[1])
                 self.remote_data[idx] = bytes([entry_type]) + entry
@@ -510,6 +521,7 @@ class TableDoc:
 
     def txids_to_digits(self, dataitem_raw, txid_raw, block_raw):
         hash = hashlib.sha256(dataitem_raw + txid_raw + block_raw)
+        hash = hash.digest()
         return self.hash_to_digits(hash)
 
 class HashMap(TableDoc):
@@ -580,7 +592,8 @@ class BundleIndexer:
     def add_forward(self):
             loader = self.root.remote_data.loader
         #with self.root:
-            block = loader.block_height(self.next_block)
+            block = loader.block_height(self.next_block) # this could go faster with block2 i think, passing to include all txs in cache
+            ar.logger.info(f'Reading block {self.next_block}: {block["indep_hash"]}')
             for tx in block['txs']:
                 tx_tags = loader.tx_tags(tx)
                 if not get_tags(tx_tags, b'Bundle-Format'):
@@ -909,7 +922,7 @@ if __name__ == '__main__':
         indexer.add_forward()
         now = time.time()
         #if True:
-        if now - then > 60*15:
+        if now - then > 60*60:
             then = now
             indexer.save()
             print(indexer.root.ids)
