@@ -353,7 +353,12 @@ class ChunkStream(io.RawIOBase):
                 logger.info(f'{self.stream_first}: Requesting bounds of chunk before {chunk_first - self.stream_first} to find {offset - self.stream_first}...')
                 chunk_first = chunk_last - self.peer.chunk_size(chunk_last) + 1
                 additional.append((chunk_first, chunk_last))
-            self.chunks[nearest_idx : nearest_idx] = additional
+            if len(additional):
+                assert additional[0][1] + 1 == self.chunks[nearest_idx][0]
+            self.chunks[nearest_idx : nearest_idx] = additional[::-1]
+            #for a, b in zip(self.chunks[:-1], self.chunks[1:]):
+            #    assert a[0] <= a[1]
+            #    assert a[1] < b[0]
             return chunk_first, chunk_last
 
         def walk_right(nearest_idx):
@@ -363,9 +368,13 @@ class ChunkStream(io.RawIOBase):
                 chunk_first = chunk_last + 1 # needed so chunk_size gets the _next_ chunk
                 logger.info(f'{self.stream_first}: Requesting bounds of chunk after {chunk_last - self.stream_first} to find {offset - self.stream_first}...')
                 chunk_last = chunk_first + self.peer.chunk_size(chunk_first) - 1
-                nearest_idx += 1
                 additional.append((chunk_first, chunk_last))
-            self.chunks[nearest_idx + 1 : nearest_idx + 1] = additional[::-1]
+            if len(additional):
+                assert self.chunks[nearest_idx][1] + 1 == additional[0][0]
+            self.chunks[nearest_idx + 1 : nearest_idx + 1] = additional
+            #for a, b in zip(self.chunks[:-1], self.chunks[1:]):
+            #    assert a[0] <= a[1]
+            #    assert a[1] < b[0]
             return chunk_first, chunk_last
 
         right_idx = bisect.bisect_right(self.chunks, offset, key=lambda interval: interval[1])
