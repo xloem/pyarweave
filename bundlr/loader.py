@@ -28,9 +28,9 @@ class Loader:
             tags = self.peer.tx_tags(bundleid)
             stream = self.peer.stream(bundleid)
             header = ANS104BundleHeader.from_tags_stream(tags, stream)
-            offset = header.get_offset(txid)
+            offset, end = header.get_range(txid)
             stream.seek(offset)
-            dataitem = DataItem.fromstream(stream)
+            dataitem = DataItem.fromstream(stream, length = end - offset)
             data = dataitem.data
         else:
             data = self.peer.data(txid)
