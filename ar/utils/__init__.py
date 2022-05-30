@@ -81,19 +81,6 @@ def utf8dec_if_bytes(data):
     else:
         return data
 
-def le_u256dec(data):
-    qword1, qword2, qword3, qword4 = struct.unpack('<4Q', data)
-    return qword1 | (qword2 << 64) | (qword3 << 128) | (qword4 << 192)
-
-def le_u256enc(valu):
-    return struct.pack(
-        '<4Q',
-        value & 0xffffffffffffffff,
-        (value >> 64) & 0xffffffffffffffff,
-        (value >> 128) & 0xffffffffffffffff,
-        (value >> 192) & 0xffffffffffffffff
-    )
-
 # all this tags stuff could be a Tags class
 
 def create_tag(name, value, v2):
@@ -137,17 +124,23 @@ def dict_to_tags(tags_dict):
         for key, value in tags_dict.items()
     ]
 
-def change_tag(tags, name, value):
+def change_tag(tags, name, value, condense_to_one=False):
     name = utf8enc_if_not_bytes(name)
     newvalue = utf8enc_if_not_bytes(value)
     to_change = None
-    for tag in tags:
+    to_remove = []
+    for idx, tag in enumerate(tags):
         if tag['name'] == name:
             if to_change is not None:
-                raise Exception('more than one tag with name')
+                if condense_to_one:
+                    to_remove.append(idx)
+                else:
+                    raise Exception('more than one tag with name')
             to_change = tag
     if to_change is not None:
         to_change['value'] = newvalue
+        for idx in to_remove[::-1]:
+            tags.pop(idx)
     else:
         tags.append(create_tag(name, newvalue, True))
     return tags

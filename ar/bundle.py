@@ -6,7 +6,7 @@ import fastavro
 from Crypto.Hash import SHA256
 from Crypto.Random import get_random_bytes
 
-from .utils import b64dec, b64enc, b64dec_if_not_bytes, b64enc_if_not_str, le_u256enc, le_u256dec, encode_tag, decode_tag, normalize_tag, tags_to_dict
+from .utils import b64dec, b64enc, b64dec_if_not_bytes, b64enc_if_not_str, encode_tag, decode_tag, normalize_tag, tags_to_dict
 from .utils.deep_hash import deep_hash
 from .utils.ans104_signers import DEFAULT as DEFAULT_SIGNER, BY_TYPE as SIGNERS_BY_TYPE
 
@@ -51,8 +51,8 @@ class ANS104BundleHeader:
         return 32 + len(self.length_by_id) * 64
 
     def tobytes(self):
-        return le_u256enc(len(self)) + b''.join((
-            le_u256enc(length) + b64dec(id)
+        return self.get_count().to_bytes(32, 'little') + b''.join((
+            int(length).to_bytes(32, 'little') + b64dec(id)
             for id, length in self.length_by_id.items()
         ))
 
@@ -79,10 +79,10 @@ class ANS104BundleHeader:
 
     @classmethod
     def fromstream(cls, stream):
-        entryct = le_u256dec(stream.read(32))
+        entryct = int.from_bytes(stream.read(32), 'little')
 
         length_id_pairs = (
-            (le_u256dec(stream.read(32)), b64enc(stream.read(32)))
+            (int.from_bytes(stream.read(32), 'little'), b64enc(stream.read(32)))
             for idx in range(entryct)
         )
 
@@ -437,7 +437,7 @@ class Bundle:
     @property
     def header(self):
         return ANS104BundleHeader({
-            item.id: item.get_len_bytes()
+            item.header.id: item.get_len_bytes()
             for item in self.dataitems
         })
 
@@ -450,7 +450,7 @@ class Bundle:
         }
 
     def tobytes(self):
-        return self.header + b''.join(item.tobytes() for item in self.dataitems)
+        return self.header.tobytes() + b''.join(item.tobytes() for item in self.dataitems)
     
     @classmethod
     def fromjson(cls, json):
@@ -460,7 +460,7 @@ class Bundle:
     @classmethod
     def frombytes(cls, bytes):
         stream = io.BytesIO(bytes)
-        return self.fromstream(stream)
+        return cls.fromstream(stream)
 
     @classmethod
     def fromstream(cls, stream):

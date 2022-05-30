@@ -14,6 +14,7 @@
 
 
 from ar import Wallet, DataItem, ANS104DataItemHeader, Bundle
+from ar.utils import b64dec
 import pytest
 
 import sys
@@ -86,67 +87,60 @@ def test_serialize_unsigned():
     assert dataitem.verify()
 
 def test_ans104_verification():
-    ans104_bytes = (
-        b'\x01\x00\x89%\xb6\x8d\x95\xce\xc2dz\x8b;\x82\xbcw\xf7\x0b5\xce' +
-        b'\x95\x94\xc4\xb3.m\xb3\xbfwM\xaf\xa08O\x8a\x12\x7f\xfa\x18\xcbU' +
-        b'\xfa\xf4\xfc0.\x1dF*q\xc6\xb4\x96\xdb\x95\xf2\xfd)\x13L\xc2\xac' +
-        b'\x89|\x0f\xdd\tOP`\xc0\x0b)\xb7S\x16^G\xd6\x89\xc9\xbe\x12\xf6' +
-        b'\x9a \xa3\x1a\x1cm5\xed\xb4\xfaV\xf92\r\x9d\xfe\xbc\x1a\\\x802' +
-        b'\x8d\xa2\x0c\xdd\xd6\xa3\xd6\x17e\xb3s\xc6m\xaf\x97\xd4g\x95\xd6' +
-        b'\xc2\x07\xf1\x03\xd3v\xa3\xef\x17B`\x94\xd3\x7f\x91\x0f\xb9\x18' +
-        b'\x1cSy\x92\x8e\xae\x82\xf8}\xe9\x13\x056\x96qW\x99\x82+\\k1d\xb5' +
-        b'R\xbc\x184\x04\x7fQ\xa1L1G\x88\x89\xdd\x0e\xbfq\xadR\xbe\xd3+' +
-        b'\xa6b\xc7\x94\x9a\xff\xc7-\x85\xe23--\x8e\x153s\x9b\x00\xc82\xf8' +
-        b'\xf2-I\xbd\xfd\xc3\x1e\xc2\x91\xb7\xca\xe0\xe1y7&-=\xa67\xbf\xc9' +
-        b'\xe3\x91?U\xb7\x05\\}|\x11P/\xe7\x02\xe2\xbf\xbeg\xaa\xa8\xa4b' +
-        b'\xe3\xdc\xde\x0f\x01\xde%gFc\x97>\xb8\xdc\x10\x86\x03\x11\xf1' +
-        b'\xd1X\\\xbe\xdc\x88Nv+\xd3=\xf4|)\xce?\x15\xf8\xed\x868\x8d\xe1^' +
-        b'\x9e\xd9\xf1\x99\xfcGZ@\xf3B\xfe\x0c\x1f\xf5\xcb\xb1\xe7\x81\xad' +
-        b'a\x96a\n\xe22;\xf9\x80_O\xcaDZ\x93\xbf{\xef\xc2\x05\xd8kI\x9a' +
-        b'\xc0\x94\x9f5\x15\xbd\x04\xfc\x03\xba\x91\x8f\x00+N\xf0\x93Z\xdd' +
-        b'\x99V \x1e\xd5G\xc0\x11\xd0M\xab0\xea&\xf8\x1b\\\xcd\xdf\x15\xf1' +
-        b'/n\x12\x0f\x03\xa9-\xcd\xc0\xc4\x9ab\xfa\xdc\xd4t\xe7\x89A\x98' +
-        b'\xf07\x1aI\xd1!\x99\xc5\xa9\t\xde?h@\xbc\xc0\xd0\x8c\xa5\xedt\n' +
-        b'\xf5q\x90\xba\x15\x1c\x8a\xc9bK\xc8\xab\xf9\x8db|\xa3\xfdjGUR=RB' +
-        b'y\xe8{|\xdav\xb9\xc7\x03\xeb\xf1\x0b\xa8Q\xa4\xe2\xa5\xf3\xb9' +
-        b'\x8d\xb1<\x07p&\xb0\x83H<\xedIxZ\xe5\n\xa8\xe7s\xa2\xbf\xaf\xdey' +
-        b'D$EQ\x1f *\xbf\x80JI"T\xb8:\xd1\x80\xe3\xd2\x83s,=\x8e\xdd\x94>{' +
-        b'\x92\x83\xe0\x87\x8f\x04\xd4q\xea$M\xdb=_\x88k\xf8\xa6)\xe4\x14' +
-        b'\x8d\xd89\xb5\xe0\x926\x0e\xb8\xd7&\xef\xb7\xaan\xc5\xe8~f\xb4h' +
-        b'\x93\x1d\x8b\xc7\x14\x17\xd2N\xdcm\x0b\xfd\xe51QPSCi\x01|b\x92' +
-        b'\xed2\x97\xe20\xcft\xa8\xf7E\xe9lp\xd2}\x8eyU}\xd1\x111\x14V#' +
-        b'\x95\xef(\x91\xee\xaf\xd5\xdf\x8d\xef/\xc0\x94M\xb8I,B\xa6w|\xf9' +
-        b'-\x93\xca7o\xd1&\np\xa3\xfb=Wu\x12?\xb8m\xc3\x95\xe7\xd9\x8d\xea' +
-        b'H68\xe3\xc9\xf5@\x92\xa1\x19\x1e\xa4\x8c)\xd9e~\xab/\x8b\xb6\xd6' +
-        b'\xca\xae\xb7B\xb4\r\'\xb1\xef\x89\x92\xc0\x14\xc3\xf6\xd0\x18' +
-        b'\x1c6)I\x94\x9c\xa4\x85\xec9\xc9\x920\xc2\xfa\xb0[\'\x12\xb0\xd6' +
-        b'\xd4\xcb\xb8\x8c\xf4\x1da\xb1\x84\xb8\xd1\xe8\xb0`\xda\xcc\xb7' +
-        b'\xa7\x82\xc9}\xd6\xdd\xa0u\xf6K\x03\xd3\xa1\x82\x17\x18\xd2\x1eb' +
-        b'\xee\x975\xdfV\x89\xd1\x0f\x0e\x9f\x1c\xac\x03|\x02\x8f\xf8\xdb' +
-        b'\x06Jm\xae.\xe9bA\x070\xd5\xfd\x91\x10\x10\xef\x12#\x02`\x13c' +
-        b'\x80\xda\x1b\x9e\xc9\x9d\xca\xea\xd7{\xcfFAQ\x1d\xc7\x1d\xd7W' +
-        b'\xaa\x8f\n;\xbf\xc4P\x9d\xd9(\xeb\x86M{\xf4F)\x18:yH\x92\xfa\xec' +
-        b'&\x83e\x0cY}\xbc\t\x05\xe0\xaf\xc8\x1d\x82P9\x86\x0f\xda\xa9\xe2' +
-        b'9/6f3\xc6\xb3\x96,H"e1\xf4\n\xaa\xbf47]\x99\x92\x0b\xe8HR\x16' +
-        b'\x9d\xaf\x1a\x05\xfdh\x08s\xb2\xb1\xb8)\x1a\x92\xf4\xfe\x99\xf7' +
-        b'\xa1\xda\x06\x0e\xe9\x82%\xbe\x1a\x8d\x88\x02\xcb\x04\xe9\xe6' +
-        b'\xc8\xf1\x1d\x8a`\xd5\xd5\xc8\x8b~\xdb\x84\x85\x99T\x9c\x9ex\xf6' +
-        b'\xe2\xbff\xf6\xf85R\t>\x01\xfd\xf9\x17\x86\x1c\xc7k\xfe\xabR\x9a' +
-        b'&H\xadn\xe9\xd7\xf3\xee\xb1\xcb\xf6>"\xdf^\x96\xff\xc26\xe1w\xa5' +
-        b'H^\x07\xae\xfa \x84-\x17\xf6j\n\xcc\x9c\xa2\xf3\x931m:\xa1\xcdM' +
-        b'\x10\x8d\xc21\xb4\x82\x1e\xb2\x91Lo6IQ\x8c\xba17=\x80q\xd8\xd5v' +
-        b'\xaa\xc7\x00\x00\x07\x00\x00\x00\x00\x00\x00\x00\xdb\x00\x00\x00' +
-        b'\x00\x00\x00\x00\x0e\x08Type\x08file\x0eBundler8https://node2.bu' +
-        b'ndlr.network\x0cBundle\x0cans104\x14User-Agent\x08arkb$User-Agen' +
-        b't-Version\x0c1.1.56\x18Content-Type0application/octet-stream\x12' +
-        b'File-Hash\x80\x011bbc5db9f969c26aef492af5016a719e496e038fb1a2b51' +
-        b'd11daf93b639908f2\x00x\x01+)JMU06`01\x00\x02\x05\xa3\xe4T\x86' +
-        b'\xcco\x96\x1c\xc7\xbc\xe6O\xf6}\xdd\x93\x962%_\x90q\xb2\xb1\x12' +
-        b'\x00\xe5\xcb\x0c\xaf'
+    ans104_bytes = b64dec(
+        'AgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA7BAAAAAAAAAAAAAAAAAAAA' +
+        'AAAAAAAAAAAAAAAAAAAAMMgNGPWg5dhVDpUazP7xYqx9vxTNGPUYdY-3hmW72NdOw' +
+        'QAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD7wsN3lql-M8omo4bf54N2rtN' +
+        'TYCR3O_azhCD6wgqKJgEAnGSycvu0Z2zcqjVmiaO7p5Ay534fnEZoHzfI9gJKjMNv' +
+        'G-SaIyMBhz1r9DIB-F77_7aRNT_si46F9wZvht9eBC5AEAbYJrTfKU81x5DqSvcgk' +
+        'm4O8c5TQIFOTUkja_itPj8be6d9h4lY1Ob4NDLt683SkwXHNdtqOV6dnrIdjuzx-q' +
+        '2Vby-w1tSudfBMZfUXZm0MjXEJq12RqLUcMnTKjweEzxYu1Q-aAsbeGSMKyZX1Mk0' +
+        '2O7pIUhCjmV-WL8m1LjiMp0Hw6HpU6YInhaW-C7ewm4Oy4YUiR-fN_fG8X9Nh7AWe' +
+        'DXhmMKcGaPahT2NZzHxS0QFxI3hIGZju7VuItPQsgj5ED8Xa85An4WzCIqeZusjjO' +
+        'Ow75JiQHaR5mcWcDmIr2A1lhaweWtJuicYfwLpt4GawzQCLqqIcUBRz8vtANi8fVy' +
+        'S4J6dV-jRBYH-jQ1DEUrTnHqldHS_Y6HHB0GUyjqZ850AQe1EFBENv0R096WklLwW' +
+        '4VmQdplYZElwwEM337KU57nOGhB_0VAOmq9eDR_LAzjdoq-hvvIdMxiBuqPeFiHBF' +
+        'NTO_Scr26jvLn7c14CIh6JKfFiHZlPyiDEaz0WJdydcaORwIHaW81IdmIv8RQQ0oC' +
+        'xvTTPN6fejBF1jKaBOwl2I67bcxWHBBEhHa2j5iHaBJQ8PlqAK9A4zFTs4LSaUgee' +
+        'qcB3i5GKoW-jTcWBtw3ICGkmynNiMxzvTbu6NlEkWpu0aJWcr6IyTGYnmyFOGCH-t' +
+        'y8C2zLTfTyL0gL7wAya0uNHdX3Cy4UJ6g4GA7wy2Pk4qKIqKJFzhel_TK79eOnE0o' +
+        'AEQI-lbP9-RHjPYqm51cDjbISqj-Vetc7ou70PcvAfFiGbpGpI7SYOnF9vNly5Mex' +
+        'iMWjUF7dezTZpqv9ntZGspmRq8DmmVfHhOQrN-7TFT5L-nb52oR2KrFrNm4M-TOrC' +
+        'ELigxqlnakMbStOCJQE50hbzBA-ZsUv7OUMZcf-LcY0BQpS9dxMF7uIlF0vr0QtVA' +
+        'hFUb16Ec7t1lv2P3tVgSDg7p6gszun6pG1_zZIcRVqe8hO_EtKbdGr1chLXbfsElg' +
+        'HRCzEY2OY8Qces57yxjMGx4x5S9Doco0RfRW4zbKn9s_OtxF5RGvaq8SFKufcZdwa' +
+        'jbGH9TshTibfxhXW7V6k83tPIUnAhy7E7IuxLrxGubEhI54M_NmetVn0SMdtTcilg' +
+        'QjOd7-8c5koa4e37587C7Yx0K6lD7oRxTsxzRIlkp-4CwBNz0LHBj8lxfeuAwnlg7' +
+        'XzOGvUFu51dLQ6ePRGwOF4saw117wCBbfEtD_2VnTKZTbN-1Vfj8J-nIXyCOcnWH-' +
+        'wItJyuxL8_v8PsI5o-R_kQAAAQAAAAAAAAAaAAAAAAAAAAIYQ29udGVudC1UeXBlF' +
+        'HRleHQvcGxhaW4AQnVuZGxyTmV0d29yawEAKLIox3kOGg0__5c2QtRR-yFYjE2sOK' +
+        'QAdO3CU4FjpqDPE6u93Kdug1CRD4yZfrZr2CtQWWLKOWaWngA0GJgbm8NXTcRI5Tr' +
+        '_T6mSfbnkTug9oDbAAOmPTCV9LDYS8GJakccTvOFyNrmS4zkzIl2EWQY1trdortRc' +
+        'fkh5i6O4ZaT2poV-GlQ_S4ZcmGKaD_CA1ec5zFAGFIB6tfLpJiDmnzC1eyJIg1-RC' +
+        '0Vef-XE8IhAOVbT50HkyCCgFF7U9ajJhmkonPjW4cUoPa4hSjijqnCm3Y4yEke7sB' +
+        'ZoulsKMu2w7VfHPcJargGLcM2zoLjYSvN1L1SCcXXvm-YXoSjpRhFSCk8yD5EpFeg' +
+        'FDko4DgCHABTrP9DYmP7JFaF8nTxMSfKMTDcSVFt-EQMSOn-rlhExFh8TFbpYeaBB' +
+        'NSQxamjSl9-Rwy1f62saOj4vAQ5UB_Ef4SeHVVXEpjv8ANnyGnNRstpwrqzZNMAbb' +
+        'bdBHG3fjz3LlXR1TkyxX_iI8vwDehMSzIyc1ImFMCwJElA2iafBO5rDpNa6ZE-9k0' +
+        'cNTvHEPgCRcqUN8iMuEUh2U3AXxs3UdqOkb5OMdH6SKiw8bRtlbWQxBfxe08klUqO' +
+        'NGdpoOvnUGpPbZlYBmPQ5b5ZtklhX_HL4LPsnESanoiWCilegThdVIQHOfx2gyvfC' +
+        'SmLFTs4LSaUgeeqcB3i5GKoW-jTcWBtw3ICGkmynNiMxzvTbu6NlEkWpu0aJWcr6I' +
+        'yTGYnmyFOGCH-ty8C2zLTfTyL0gL7wAya0uNHdX3Cy4UJ6g4GA7wy2Pk4qKIqKJFz' +
+        'hel_TK79eOnE0oAEQI-lbP9-RHjPYqm51cDjbISqj-Vetc7ou70PcvAfFiGbpGpI7' +
+        'SYOnF9vNly5MexiMWjUF7dezTZpqv9ntZGspmRq8DmmVfHhOQrN-7TFT5L-nb52oR' +
+        '2KrFrNm4M-TOrCELigxqlnakMbStOCJQE50hbzBA-ZsUv7OUMZcf-LcY0BQpS9dxM' +
+        'F7uIlF0vr0QtVAhFUb16Ec7t1lv2P3tVgSDg7p6gszun6pG1_zZIcRVqe8hO_EtKb' +
+        'dGr1chLXbfsElgHRCzEY2OY8Qces57yxjMGx4x5S9Doco0RfRW4zbKn9s_OtxF5RG' +
+        'vaq8SFKufcZdwajbGH9TshTibfxhXW7V6k83tPIUnAhy7E7IuxLrxGubEhI54M_Nm' +
+        'etVn0SMdtTcilgQjOd7-8c5koa4e37587C7Yx0K6lD7oRxTsxzRIlkp-4CwBNz0LH' +
+        'Bj8lxfeuAwnlg7XzOGvUFu51dLQ6ePRGwOF4saw117wCBbfEtD_2VnTKZTbN-1Vfj' +
+        '8J-nIXyCOcnWH-wItJyuxL8_v8PsI5o-R_kQAAAQAAAAAAAAAaAAAAAAAAAAIYQ29' +
+        'udGVudC1UeXBlFHRleHQvcGxhaW4AQnVuZGxyTmV0d29yaw'
     )
-    dataitem = DataItem.frombytes(ans104_bytes)
-    assert dataitem.verify()
-    assert dataitem.tobytes() == ans104_bytes
+    bundle = Bundle.frombytes(ans104_bytes)
+    for dataitem in bundle.dataitems:
+        assert dataitem.verify()
+    assert bundle.tobytes() == ans104_bytes
 
 def test_ans102_verification():
     ans102_json = (
