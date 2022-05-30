@@ -908,7 +908,7 @@ if __name__ == '__main__':
     while True:
         indexer.add_forward()
         now = time.time()
-        if True:
+        #if True:
         if now - then > 60*30:
             then = now
             indexer.save()
