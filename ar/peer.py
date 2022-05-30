@@ -380,39 +380,14 @@ class Peer(HTTPClient):
             headers['x-bucket-based-offset'] = '1'
 
         response = self._get('chunk', str(offset), headers=headers)
-        result = response.json()
-        for key in ('tx_path', 'data_path', 'chunk'):
-            result[key] = b64dec(result[key])
-        return result
+        return response.json()
 
     def chunk2(self, offset, packing = 'unpacked', bucket_based_offset = False):
         '''
         Returns the data chunk containing 1-based offset,
-        using raw binary network transmission.
+        using a raw binary format for the fields.
 
         {packing} := { 'unpacked' | 'spora_2_5' | 'any' }
-
-        The raw data format from the endpoint is b[
-            chunk_size      3 bytes, big-endian
-            chunk           chunk_size bytes
-
-            txpath_size     3 bytes, big-endian
-            txpath          txpath_size bytes
-
-            datapath_size   3 bytes, big-endian
-            datapath        datapath_size bytes
-
-            packing2_size   1 byte
-            packing2        packing2_size bytes
-        ]
-
-        This function parses it to return the same format as chunk():
-        {
-            "chunk": b"<chunk>",
-            "tx_path": b"<txpath>",
-            "data_path"; b"<datapath>",
-            "packing": "packing"
-        }
         '''
 
         headers = {
@@ -421,17 +396,8 @@ class Peer(HTTPClient):
         if bucket_based_offset:
             headers['x-bucket-based-offset'] = '1'
 
-        response = self._get('chunk2', str(offset), headers=headers, stream = True)
-        with response_stream_to_file_object(response) as stream:
-            result = {}
-            result['chunk'] = arbindec(stream, 24)
-            result['tx_path'] = arbindec(stream, 24)
-            result['data_path'] = arbindec(stream, 24)
-            result['packing'] = arbindec(stream, 8).decode()
-            extra = stream.read()
-            if extra:
-                result['_extra'] = extra
-            return result
+        response = self._get('chunk2', str(offset), headers=headers)
+        return response.content
 
     def chunk_size(self, offset, packing = 'unpacked', bucket_based_offset = False):
         '''Returns the size of the data chunk containing 1-based offset.'''

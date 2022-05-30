@@ -180,22 +180,7 @@ def ar_to_winston(ar_amount: str) -> str:
 
 
 def concat_buffers(buffers):
-    total_length = 0
-
-    for buffer in buffers:
-        total_length += len(buffer)
-
-    offset = 0
-
-    temp = b'\x00' * total_length
-    temp = bytearray(temp)
-    for buffer in buffers:
-        for i in range(len(buffer)):
-            temp[i + offset] = buffer[i]
-
-        offset += len(buffer)
-
-    return bytes(temp)
+    return b''.join(buffers)
 
 from .. import logger
 class response_stream_to_file_object:
