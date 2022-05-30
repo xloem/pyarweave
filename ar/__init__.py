@@ -41,6 +41,7 @@ from .peer import Peer
 from .wallet import Wallet
 from .transaction import Transaction
 from .block import Block
+from .chunk import Chunk
 from .arweave_lib import arql
 from .bundle import Bundle, DataItem, ANS104BundleHeader, ANS104DataItemHeader
 

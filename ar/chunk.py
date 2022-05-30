@@ -11,12 +11,20 @@ class Chunk:
         self.packing = packing
 
     @property
-    def first_offset(self):
+    def start_offset(self):
         return self.data_path[-1].min_byte_range
 
     @property
-    def last_offset(self):
+    def end_offset(self):
         return self.data_path[-1].max_byte_range
+
+    @property
+    def tx_start_offset(self):
+        return self.tx_path[-1].min_byte_range
+
+    @property
+    def tx_end_offset(self):
+        return self.tx_path[-1].max_byte_range
 
     @property
     def data_hash_raw(self):
