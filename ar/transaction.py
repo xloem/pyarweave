@@ -3,16 +3,18 @@ import os
 import io
 import hashlib
 from jose import jwk
-from jose.utils import base64url_encode
 from .utils import (
     winston_to_ar,
     ar_to_winston,
     create_tag,
     encode_tag,
     decode_tag,
-    base64url_decode
+    b64enc, b64dec,
+    arbinenc, arbindec,
+    arintenc, arintdec,
 )
 from .peer import Peer
+from .wallet import Wallet
 from .utils.deep_hash import deep_hash
 from .utils.merkle import compute_root_hash, generate_transaction_chunks
 from . import logger
@@ -36,9 +38,9 @@ class Transaction(object):
         self.data_size = len(data)
 
         if type(data) is bytes:
-            self.data = base64url_encode(data)
+            self.data = b64enc(data)
         else:
-            self.data = base64url_encode(data.encode('utf-8'))
+            self.data = b64enc(data.encode('utf-8'))
 
         if self.data is None:
             self.data = ''
@@ -78,6 +80,90 @@ class Transaction(object):
 
             self.signature = ''
             self.status = None
+
+    @classmethod
+    def frombytes(cls, bytes):
+        stream = io.BytesIO(bytes)
+        tx = cls.fromstream(stream)
+        assert stream.tell() == len(bytes)
+        return tx
+
+    @classmethod
+    def fromstream(cls, stream):
+        bintx = arbindec(stream, 24)
+        stream = io.BytesIO(bintx)
+        format = stream.read(1)[0]
+        id_raw = stream.read(32)
+        last_tx_raw = arbindec(stream, 8)
+        owner_raw = arbindec(stream, 16)
+        target_raw = arbindec(stream, 8)
+        quantity = arintdec(stream, 8)
+        data_size = arintdec(stream, 16)
+        data_root_raw = arbindec(stream, 8)
+        signature_raw = arbindec(stream, 16)
+        reward = arintdec(stream, 8)
+        data_raw = arbindec(stream, 24)
+
+        tags_count = int.from_bytes(stream.read(2), 'big')
+
+        tags = []
+        for tag_idx in range(tags_count):
+            name_size = int.from_bytes(stream.read(2), 'big')
+            value_size = int.from_bytes(stream.read(2), 'big')
+            name = stream.read(name_size)
+            value = stream.read(value_size)
+            tag = create_tag(name, value, format == 2)
+            tags.append(tag)
+
+        assert stream.tell() == len(bintx)
+
+        wallet = Wallet(
+            jwk_data = {
+                'kty': 'RSA',
+                'e': 'AQAB',
+                'n': b64enc(owner_raw)
+            }
+        )
+        wallet.get_last_transaction_id = lambda: b64enc(last_tx_raw)
+
+        tx = cls(
+            format = format,
+            id = b64enc(id_raw),
+            wallet = wallet,
+            target = b64enc(target_raw),
+            quantity = winston_to_ar(quantity),
+            reward = winston_to_ar(reward),
+            data = data_raw,
+        )
+        tx.data_size = data_size
+        tx.data_root = b64enc(data_root_raw)
+        tx.signature = b64enc(signature_raw)
+        tx.tags = tags
+        return tx
+
+    def tobytes(self):
+        return arbinenc(b''.join((
+            bytes([self.format]),
+            b64dec(self.id),
+            arbinenc(b64dec(self.last_tx), 8),
+            arbinenc(b64dec(self.owner), 16),
+            arbinenc(b64dec(self.target), 8),
+            arintenc(int(ar_to_winston(self.quantity)), 8),
+            arintenc(self.data_size, 16),
+            arbinenc(b64dec(self.data_root), 8),
+            arbinenc(b64dec(self.signature), 16),
+            arintenc(int(ar_to_winston(self.reward)), 8),
+            arbinenc(b64dec(self.data), 24),
+            
+            len(self.tags).to_bytes(2, 'big'),
+            *(b''.join((
+                len(tag['name']).to_bytes(2, 'big'),
+                len(tag['value']).to_bytes(2, 'big'),
+                tag['name'],
+                tag['value']
+            )) for tag in self.tags)
+        )), 24)
+
     @property
     def api_url(self):
         return self.peer.api_url
@@ -114,9 +200,9 @@ class Transaction(object):
 
         raw_signature = self.wallet.sign(data_to_sign)
 
-        self.signature = base64url_encode(raw_signature)
+        self.signature = b64enc(raw_signature)
 
-        self.id = base64url_encode(hashlib.sha256(raw_signature).digest())
+        self.id = b64enc(hashlib.sha256(raw_signature).digest())
 
         if type(self.id) == bytes:
             self.id = self.id.decode()
@@ -126,12 +212,12 @@ class Transaction(object):
 
         if int(self.data_size) > 0 and self.data_root == '' and not self.uses_uploader:
             if type(self.data) == str:
-                root_hash = compute_root_hash(io.BytesIO(base64url_decode(self.data.encode('utf-8'))))
+                root_hash = compute_root_hash(io.BytesIO(b64dec(self.data.encode('utf-8'))))
 
             if type(self.data) == bytes:
-                root_hash = compute_root_hash(io.BytesIO(base64url_decode(self.data)))
+                root_hash = compute_root_hash(io.BytesIO(b64dec(self.data)))
 
-            self.data_root = base64url_encode(root_hash)
+            self.data_root = b64enc(root_hash)
 
         if self.format == 1:
             tag_str = ''
@@ -140,12 +226,12 @@ class Transaction(object):
                 name, value = decode_tag(tag)
                 tag_str += '{}{}'.format(name.decode(), value.decode())
 
-            owner = base64url_decode(self.jwk_data['n'].encode())
-            target = base64url_decode(self.target)
-            data = base64url_decode(self.data)
+            owner = b64dec(self.jwk_data['n'].encode())
+            target = b64dec(self.target)
+            data = b64dec(self.data)
             quantity = self.quantity.encode()
             reward = self.reward.encode()
-            last_tx = base64url_decode(self.last_tx.encode())
+            last_tx = b64dec(self.last_tx.encode())
 
             signature_data = owner + target + data + quantity + reward + last_tx + tag_str.encode()
 
@@ -157,14 +243,14 @@ class Transaction(object):
 
             signature_data_list = [
                 '2'.encode(),
-                base64url_decode(self.jwk_data['n'].encode()),
-                base64url_decode(self.target.encode()),
+                b64dec(self.jwk_data['n'].encode()),
+                b64dec(self.target.encode()),
                 str(self.quantity).encode(),
                 self.reward.encode(),
-                base64url_decode(self.last_tx.encode()),
+                b64dec(self.last_tx.encode()),
                 tag_list,
                 str(self.data_size).encode(),
-                base64url_decode(self.data_root)]
+                b64dec(self.data_root)]
 
             signature_data = deep_hash(signature_data_list)
 
@@ -260,7 +346,7 @@ class Transaction(object):
     def prepare_chunks(self):
         if not self.chunks:
             self.chunks = generate_transaction_chunks(self.file_handler)
-            self.data_root = base64url_encode(self.chunks.get('data_root'))
+            self.data_root = b64enc(self.chunks.get('data_root'))
 
         if not self.chunks:
             self.chunks = {
@@ -285,7 +371,15 @@ class Transaction(object):
         return {
             'data_root': self.data_root.decode(),
             'data_size': str(self.data_size),
-            'data_path': base64url_encode(proof.proof),
+            'data_path': b64enc(proof.proof),
             'offset': str(proof.offset),
-            'chunk': base64url_encode(chunk_data)
+            'chunk': b64enc(chunk_data)
         }
+
+if __name__ == '__main__':
+    import ar
+    peer = ar.Peer()
+    sometx = peer.current_block()['txs'][0]
+    txbytes = peer.tx2(sometx)
+    tx = Transaction.frombytes(txbytes)
+    assert tx.tobytes() == txbytes
