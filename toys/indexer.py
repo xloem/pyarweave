@@ -39,25 +39,6 @@ from ar.utils import b64enc, b64dec, b64dec_if_not_bytes, utf8enc_if_not_bytes, 
 #   BLOCKHASH is the mined block containing TXHASH.
 #
 #   The document is defined as occupying the entire data portion of DATAITEMHASH.
-
-###   OFFSET refers to an offset within TXHASH containing the bytes of the document.
-###              This will be 0 if the document is nonbundled, and 1 past the end of
-###              the dataitem header if it is.
-###   SIZE is the length of the document in bytes.
-###
-### BLOCKHASH, CHUNK, CHUNK_OFFSET
-###   
-###   BLOCKHASH refers to the block and fork that TXHASH was mined in at time of
-###             creation of the table.
-###   CHUNK is the absolute first byte of data, that will return the chunk containing
-###               the first byte of the document when passed to /chunk/ or /chunk2/,
-###               at the time of creation of the table.
-###   CHUNK_OFFSET is the offset of the first byte of the data within the chunk
-###               returned when queried with CHUNK.
-###
-###   The purpose of these is to both provide enough information to cryptographically
-###   verify the documents what they refer to, and to make it quick and easy to
-###   retrieve them.
 #
 # TYPE
 #   May take on one of the following values:
@@ -118,38 +99,12 @@ from ar.utils import b64enc, b64dec, b64dec_if_not_bytes, utf8enc_if_not_bytes, 
 #       represents the table document it belongs in.
 
 # 3. Begin filling documents in-memory or on-disk in a top-down manner.
-### can this be found bottom-up? seems complicated?
-####### each 'digit' represent an entire document
-####### so we can collect documents in a bottom-up manner, until we reach a duplicate
-####### once a digit is duplicated, then it needs an index
+### TODO update creation steps
 
 ZEROS32 = bytes(32)
 ZEROS48 = bytes(48)
 
 import threading
-
-#class IdentifiedData:
-#    #class BundleWatcher(threading.Thread):
-#    #    def __init__(self, peer):
-#    #        self.peer = peer
-#    #    def run(self):
-#
-#    #watcher = None
-#
-#    def __init__(self, loader, data = None, id = None, offset = 0, size = None):
-#        self.loader = loader
-#        self.data = data
-#        self.id = b64enc_if_not_str(id)
-#        self.offset = offset
-#        self.size = size
-#    def load(self, loader, data = None):
-#        if data is not None:
-#            self.data = data
-#        self.id = loader.send(self.data)
-#        if self.watcher is None:
-#            self.__class__.watcher = self.__class__.BundleWatcher(loader.peer)
-#        self.watcher.watch(self)
-    
 
 class BackedStructur:
     def __init__(self, loader, size = None, item_count = None, item_size = None, id_raw = None, bundle_raw = None, block_raw = None, additional_tags = []):
@@ -237,7 +192,6 @@ class BackedStructur:
                 }''')
             result = interim_result['data']['transaction']
             if result is None:
-                #import pdb; pdb.set_trace()
                 ar.logger.info(f'Waiting for {b64enc(id_raw)} to propagate ...')
                 time.sleep(30)
                 return self.block_raw
@@ -305,6 +259,8 @@ class BackedStructur:
             if self._bundle_raw is not None:
                 tags.append(create_tag('Previous-Revision-Bundle', b64enc(self._bundle_raw), True))
             assert len(self.shadow) == self.size
+            #import pdb; pdb.set_trace()
+            #'''about to send, could check to ensure tags are included'''
             id = self.loader.send(self.shadow, tags=tags)
             ar.logger.info(f'sent {id} with tags {tags}.')
             self._id_raw = b64dec(id)
@@ -450,26 +406,57 @@ class TableDoc:
         else:
             raise StructureException('unhandled table entry type', type)
 
-    def flush(self):
-        #import pdb; pdb.set_trace()
-        if self.remote_data.id_raw is None:
-            print('flushing new tabledoc')
+    def needs_flush(self):
+        if self.remote_data.dirty:
+            return True
+        for entry_type, entry in self.obj_list:
+            if (isinstance(entry, self.__class__) or isinstance(self, entry.__class__)) and entry.needs_flush():
+                return True
+        return False
+
+    def get_flush_leaves(self):
+        # i think there is a bug here somewhere
+        # makes sense to evaluate its order when there is a hierarchy of unflushed raw_ids
+        leaves = []
+        for idx, (entry_type, entry) in enumerate(self.obj_list):
+            if (isinstance(entry, self.__class__) or isinstance(self, entry.__class__)):
+                subleaves = entry.get_flush_leaves()
+                if len(subleaves):
+                    leaves.extend(subleaves)
+                else:
+                    # this hack sets the dirty flag if the outer document needs to update its entry for the inner document
+                    subid = entry.remote_data.id_raw
+                    if self.remote_data[idx][-len(subid):] != subid:
+                        self.remote_data.dirty = True
+            elif entry_type == self.DATA and not isinstance(entry, (bytes, bytearray)):
+                self.remote_data[idx] = bytes([entry_type]) + b''.join(entry[1])
+        if not len(leaves) and self.remote_data.dirty:
+            leaves.append(self)
+        return leaves
+
+    def flush(self, top_down=False):
+        if not top_down:
+            flush_leaves = self.get_flush_leaves()
+            while len(flush_leaves):
+                for leaf in flush_leaves:
+                    leaf.flush(top_down = True)
+                flush_leaves = self.get_flush_leaves()
         else:
-            print('flushing tabledoc', b64enc(self.remote_data.id_raw))
-        with self.remote_data:
-            for entry_type, entry in self.obj_list:
-                if type(entry) is self.__class__:
-                    entry.flush()
-            for idx, (entry_type, entry) in enumerate(self.obj_list):
-                if isinstance(entry, (bytes, bytearray)):
-                    continue
-                if entry_type == self.EMPTY:
-                    pass
-                elif entry_type in (self.TABLE, self.MANY):
-                    entry = entry.raw_ids
-                elif entry_type == self.DATA:
-                    entry = b''.join(entry[1])
-                self.remote_data[idx] = bytes([entry_type]) + entry
+            if self.remote_data.id_raw is None:
+                print(f'TableDoc.flush(): flushing new tabledoc with depth {self.depth}')
+            else:
+                print(f'TableDoc.flush(): flushing tabledoc {b64enc(self.remote_data.id_raw)} with depth {self.depth}')
+            with self.remote_data:
+                for idx, (entry_type, entry) in enumerate(self.obj_list):
+                    if isinstance(entry, (bytes, bytearray)):
+                        continue
+                    if entry_type == self.EMPTY:
+                        continue
+                    elif entry_type in (self.TABLE, self.MANY):
+                        entry = entry.raw_ids
+                    elif entry_type == self.DATA:
+                        entry = b''.join(entry[1])
+                    self.remote_data[idx] = bytes([entry_type]) + entry
 
     @property
     def ids(self):
@@ -921,8 +908,8 @@ if __name__ == '__main__':
     while True:
         indexer.add_forward()
         now = time.time()
-        #if True:
-        if now - then > 60*60:
+        if True:
+        if now - then > 60*30:
             then = now
             indexer.save()
             print(indexer.root.ids)
