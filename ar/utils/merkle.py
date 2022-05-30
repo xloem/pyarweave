@@ -407,7 +407,8 @@ def hash_branch(left, right=None):
         byte_range=left.max_byte_range,
         max_byte_range=right.max_byte_range,
         left_child=left,
-        right_child=right
+        right_child=right,
+        parent=None
     )
 
 

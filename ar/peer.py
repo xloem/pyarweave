@@ -874,9 +874,9 @@ class Peer(HTTPClient):
 
     def gateway_stream(self, txid, ext ='', range = None):
         if range is not None:
-            return GatewayStream.from_txid(self, txid)
-        else:
             return GatewayStream.from_txid(self, txid, range[0], range[1] - range[0])
+        else:
+            return GatewayStream.from_txid(self, txid)
 
     def peer_stream(self, txid, range = None):
         if range is not None:

@@ -11,9 +11,8 @@ class PeerStream(io.RawIOBase):
         stream_last = tx_offset['offset']
         stream_size = tx_offset['size']
         stream_first = stream_last - stream_size + 1
-        stream_end = stream_first + stream_size
 
-        return cls(peer, stream_first, offset, stream_end if length is None else min(stream_first + offset + length, stream_end))
+        return cls(peer, stream_first, offset, stream_size if length is None else min(offset + length, stream_size))
 
     def __init__(self, peer, tx_start_offset, start_offset, end_offset):
         self.peer = peer
