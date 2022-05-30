@@ -95,7 +95,7 @@ class Node:
             if leaf_max_byte_range <= midpoint:
                 assert next_branch.id_raw == l_hash
                 if type(next_branch) is BranchNode:
-                    assert next_branch.byte_range < midpoint
+                    assert next_branch.byte_range <= midpoint
                 next_branch.min_byte_range = branch.min_byte_range
                 if type(next_branch) is LeafNode:
                     assert next_branch.max_byte_range == midpoint
