@@ -91,6 +91,8 @@ class Transaction(object):
     @classmethod
     def fromstream(cls, stream):
         bintx = arbindec(stream, 24)
+        if len(bintx) == 32:
+            return b64enc(bintx)
         stream = io.BytesIO(bintx)
         format = stream.read(1)[0]
         id_raw = stream.read(32)
@@ -375,11 +377,3 @@ class Transaction(object):
             'offset': str(proof.offset),
             'chunk': b64enc(chunk_data)
         }
-
-if __name__ == '__main__':
-    import ar
-    peer = ar.Peer()
-    sometx = peer.current_block()['txs'][0]
-    txbytes = peer.tx2(sometx)
-    tx = Transaction.frombytes(txbytes)
-    assert tx.tobytes() == txbytes

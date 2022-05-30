@@ -760,6 +760,7 @@ class Peer(HTTPClient):
         return response.json()
 
     def block(self, height_or_hash):
+        '''A convenience method that hands off to block_height or block_hash.'''
         if type(height_or_hash) is int:
             return self.block_height(height_or_hash)
         elif not height_or_hash :
@@ -768,6 +769,7 @@ class Peer(HTTPClient):
             return self.block_hash(height_or_hash)
 
     def block2(self, height_or_hash):
+        '''A convenience method that hands off to block2_height or block2_hash.'''
         if type(height_or_hash) is int:
             return self.block2_height(height_or_hash)
         else:

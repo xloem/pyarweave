@@ -3,6 +3,8 @@ import io
 from ar.utils import (
     arbinenc, arintenc, arbindec, arintdec, b64enc_if_not_str, b64enc, b64dec
 )
+from .chunk import Chunk
+from .transaction import Transaction
 
 # note: there are actually three different block formats in chain history,
 # according to https://docs.arweave.org/developers/server/http-api#block-format
@@ -87,7 +89,7 @@ class Block:
         # pull out poa keys for now
         kwparams.update({
             'poa_' + key : value
-            for key, value in kwparams.pop('poa').items()
+            for key, value in kwparams.pop('poa', {}).items()
         })
 
         # convert integer strings to integers
@@ -148,8 +150,7 @@ class Block:
 
         # either 32-byte txids or complete txs
         txs_count = int.from_bytes(stream.read(2), 'big')
-        txs_raw = [arbindec(stream, 24) for idx in range(txs_count)]
-        txs = [b64enc(tx) for tx in txs_raw[::-1]]
+        txs = [Transaction.fromstream(stream) for idx in range(txs_count)][::-1]
 
         return cls(indep_hash = indep_hash_raw, prev_block = prev_block_raw,
                    timestamp = timestamp, nonce = nonce_raw, height = height,
@@ -183,7 +184,7 @@ class Block:
             'height': self.height,
             'hash': self.hash,
             'indep_hash': self.indep_hash,
-            'txs': self.txs,
+            'txs': [tx.id if type(tx) is Transaction else tx for tx in self.txs],
             'tx_root': self.tx_root,
             'wallet_list': self.wallet_list,
             'reward_addr': self.reward_addr,
@@ -234,5 +235,8 @@ class Block:
             stream.write(arbinenc(tag,                             16))
         stream.write(len(self.txs).to_bytes(2, 'big'))
         for tx in self.txs[::-1]:
-            stream.write(arbinenc(b64dec(tx),                      24))
+            if type(tx) is Transaction:
+                stream.write(tx.tobytes())
+            else:
+                stream.write(arbinenc(b64dec(tx),                  24))
         return stream.getvalue()
