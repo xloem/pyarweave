@@ -28,7 +28,7 @@ from ar.utils import b64enc, b64dec, b64dec_if_not_bytes, utf8enc_if_not_bytes, 
 # Additionally, table documents have the properties:
 #   COUNT
 #   DEPTH
-#
+
 # BLOCKHASH, TXHASH, DATAITEMHASH
 #   These refer uniquely to a range of bytes within a transaction containing
 #   another document.
@@ -53,23 +53,31 @@ from ar.utils import b64enc, b64dec, b64dec_if_not_bytes, utf8enc_if_not_bytes, 
 # DEPTH
 #   Depth reflects which part of a hash the table document relates to.
 #   At depth == 0, the table reflects the leftmost bytes of the hash.
-#   At depth == 31, the table reflects the rightmost bytes of the hash.
-#   The root document of a hashmap has a depth of 0, and each document a table
+#   At maximum depth, the table reflects the rightmost bytes of the hash.
+#   The root document of a hashmap has a depth of 0, and each table document a table
 #   references has one greater depth.
+#
+#   The maximum depth can be calculated by taking the base-COUNT logarithm of the
+#   base-2 exponent of the number of bits in the hash:
+#      ceil(log(2**256) / log(884)) = 27, for a COUNT of 884=floor(100000/113)
+#
+#   But the maximum depth is never reached, because there are not 2**256 different
+#   data documents to be indexed.
+
 
 # Looking up items using a hashmap:
 #
 # Each hashmap revision is associated with a canonical root table document.
-# To look up the value for a key, the key is broken up into offset into table documents
+# To look up the value for a key, the key is broken up into offsets into table documents
 # using modular arithmetic based on each table document's COUNT.
 # 
 # 1. Convert the hash to a biginteger in a little-endian manner.
 # 2. Perform the modulo of the hash with the table COUNT to get the item INDEX.
-# 3. Multiply INDEX by 33 to get the offset of the next TX/DATAITEM and TYPE and read them.
+# 3. Multiply INDEX by 113 to get the offset of the next TX/DATAITEM and TYPE and read them.
 # 4. If the TYPE is TYPE_TABLE:
 #    a. Subtract INDEX from the hash then divide the hash by COUNT for the next table.
 #    b. Retrieve TXHASH and return to step 2 using the next table document.
-# 5. Once the TYPE is TYPE_DATA or TYPE_EMPTY, the lookup is complete.
+# 5. Once the TYPE is TYPE_DATA, TYPE_EMPTY, or TYPE_MANY, the lookup is complete.
 
 
 
@@ -107,7 +115,7 @@ ZEROS48 = bytes(48)
 import threading
 
 class BackedStructur:
-    def __init__(self, loader, size = None, item_count = None, item_size = None, id_raw = None, bundle_raw = None, block_raw = None, additional_tags = []):
+    def __init__(self, loader, size = None, item_count = None, item_size = None, id_raw = None, bundle_raw = None, block_raw = None, tags = [], name = 'TableDoc'):
         if size is None:
             size = item_count * item_size
         elif item_count is None:
@@ -123,14 +131,14 @@ class BackedStructur:
         self._block_raw = block_raw
         self.bytes = bytes
         self.loader = loader
-        self.additional_tags = additional_tags
+        self.tags = tags
         self.dirty = False
+        self.name = name
 
         if self.id_raw is None:
             self.shadow = bytearray(size)
         else:
             self.shadow = None
-        self.dirty = False
 
     @property
     def ids(self):
@@ -246,21 +254,24 @@ class BackedStructur:
     def flush(self):
         if self.dirty:
             assert len(self.shadow) == self.size
-            tags = [
-                *self.additional_tags,
-                create_tag('Application', 'HashMap', True),
-                create_tag('Item-Size', str(self.item_size), True),
-                create_tag('Item-Count', str(self.item_count), True)
-            ]
+            tags = [*self.tags]
+            try:
+                change_tag(tags, 'Application', 'HashMap', condense_to_one=False)
+            except:
+                pass
+            try:
+                change_tag(tags, 'Name', self.name, condense_to_one=False)
+            except:
+                pass
+            change_tag(tags, 'Item-Size', str(self.item_size), condense_to_one=True)
+            change_tag(tags, 'Item-Count', str(self.item_count), condense_to_one=True)
             if self._id_raw is not None:
-                tags.append(create_tag('Previous-Revision', b64enc(self._id_raw), True))
+                change_tag(tags, 'Previous-Revision', b64enc(self._id_raw), condense_to_one=True)
             if self._block_raw is not None:
-                tags.append(create_tag('Previous-Revision-Block', b64enc(self._block_raw), True))
+                change_tag(tags, 'Previous-Revision-Block', b64enc(self._block_raw), condense_to_one=True)
             if self._bundle_raw is not None:
-                tags.append(create_tag('Previous-Revision-Bundle', b64enc(self._bundle_raw), True))
+                change_tag(tags, 'Previous-Revision-Bundle', b64enc(self._bundle_raw), condense_to_one=True)
             assert len(self.shadow) == self.size
-            #import pdb; pdb.set_trace()
-            #'''about to send, could check to ensure tags are included'''
             id = self.loader.send(self.shadow, tags=tags)
             ar.logger.info(f'sent {id} with tags {tags}.')
             self._id_raw = b64dec(id)
@@ -274,7 +285,7 @@ class TableDoc:
     DATA = 2
     MANY = 3
 
-    def __init__(self, loader, txcontent_to_digits, size = None, item_count = None, id_raw = None, dataitem_raw = None, block_raw = None, parent = None, additional_tags = [], type = TABLE):
+    def __init__(self, loader, txcontent_to_digits, name = 'TableDoc', size = None, item_count = None, id_raw = None, dataitem_raw = None, block_raw = None, parent = None, tags = [], type = TABLE):
         if dataitem_raw is None or dataitem_raw == id_raw:
             bundle_raw = None
         else:
@@ -282,7 +293,7 @@ class TableDoc:
             id_raw = dataitem_raw
         self.type = type
         self.txcontent_to_digits = txcontent_to_digits
-        self.remote_data = BackedStructur(loader, size = size, item_count = item_count, item_size = 113, additional_tags = additional_tags, id_raw = id_raw, bundle_raw = bundle_raw, block_raw = block_raw)
+        self.remote_data = BackedStructur(loader, size = size, item_count = item_count, item_size = 113, tags = tags, id_raw = id_raw, bundle_raw = bundle_raw, block_raw = block_raw, name = name)
         if parent is None:
             self.depth = 0
             self.total_height = math.ceil(
@@ -313,6 +324,7 @@ class TableDoc:
                 txid_raw = entry[48:80]
                 dataitem_raw = entry[80:112]
                 entry = TableDoc(
+                    name = f'{self.remote_data.name}-{hash_digit}' if entry_type == self.TABLE else b64enc(entry),
                     size = self.remote_data.size,
                     item_count = self.remote_data.item_count,
                     #item_size = self.remote_data.item_size,
@@ -350,6 +362,7 @@ class TableDoc:
             else:
                 # if they differ, add a table.
                 subtable = TableDoc(
+                    name = f'{self.remote_data.name}-{hash_digit}',
                     loader = self.remote_data.loader,
                     txcontent_to_digits = self.txcontent_to_digits,
                     size = self.remote_data.size,
@@ -392,7 +405,7 @@ class TableDoc:
             raise StructureException('unhandled table entry type', type)
         self.obj_list[hash_digit] = (entry_type, entry)
 
-    def get(hash_digits):
+    def get(self, hash_digits):
         hash_digit = hash_digits[self.depth]
         entry_type, entry = self.get_filling_if_needed(hash_digit)
         if entry_type == self.EMPTY:
@@ -415,8 +428,6 @@ class TableDoc:
         return False
 
     def get_flush_leaves(self):
-        # i think there is a bug here somewhere
-        # makes sense to evaluate its order when there is a hierarchy of unflushed raw_ids
         leaves = []
         for idx, (entry_type, entry) in enumerate(self.obj_list):
             if (isinstance(entry, self.__class__) or isinstance(self, entry.__class__)):
@@ -442,7 +453,7 @@ class TableDoc:
                     leaf.flush(top_down = True)
                 flush_leaves = self.get_flush_leaves()
         else:
-            if self.remote_data.id_raw is None:
+            if self.remote_data._id_raw is None:
                 print(f'TableDoc.flush(): flushing new tabledoc with depth {self.depth}')
             else:
                 print(f'TableDoc.flush(): flushing tabledoc {b64enc(self.remote_data.id_raw)} with depth {self.depth}')
@@ -473,7 +484,7 @@ class TableDoc:
     def __getitem__(self, hash):
         digits = self.hash_to_digits(hash)
         result = self.get(digits)
-        return b64enc_if_not_str(result)
+        return result
 
     def __setitem__(self, hash, tuple):
         block, txid, dataitem = tuple
@@ -505,6 +516,13 @@ class TableDoc:
             hash_int, digit = divmod(hash_int, self.remote_data.item_count)
             digits.append(digit)
         return digits
+
+    def digits_to_hash_raw(self, digits):
+        hash_int = 0
+        for digit in digits[::-1]:
+            hash_int = hash_int * self.remote_data.item_count + digit
+        hash_raw = hash_int.to_bytes(32, 'little')
+        return hash_raw
 
     def txids_to_digits(self, dataitem_raw, txid_raw, block_raw):
         hash = hashlib.sha256(dataitem_raw + txid_raw + block_raw)
@@ -551,7 +569,7 @@ class BundleIndexer:
             block =metadata['block']
         if id is not None:
             id_raw = b64dec_if_not_bytes(id)
-            tags = [tag for tag in loader.tags(id, bundle, block) if tag['name'] not in (b'Application', b'Previous-Revision')]
+            tags = [tag for tag in loader.tags(id, bundle, block) if tag['name'] not in (b'Application', b'Previous-Revision', b'Previous-Revision-Block', b'Previous-Revision-Bundle')]
             tagsblockmin = get_tags(tags, 'Block-Min')
             tagsblockmax = get_tags(tags, 'Block-Max')
             if tagsblockmin:
@@ -566,34 +584,48 @@ class BundleIndexer:
             else:
                 self.prev_block = start_block
                 self.next_block = start_block
-            tags = [tag for tag in tags if tag['name'] not in (b'Block-Min', b'Block-Max')]
+            #tags = [tag for tag in tags if tag['name'] not in (b'Block-Min', b'Block-Max')]
+            if not get_tags(tags, b'Block-Min'):
+                ensure_tag(tags, b'Block-Min', str(start_block))
         else:
             id_raw = None
-            tags = []
+            tags = [
+                create_tag('Block-Min', str(start_block)),
+                create_tag('Block-Max', str(start_block))
+            ]
             self.prev_block = start_block
             self.next_block = start_block
-        self.root = TableDoc(loader, self.txcontent_to_digits, size=size, id_raw = id_raw, additional_tags = tags)
+        self.root = TableDoc(loader, self.txcontent_to_digits, size=size, id_raw = id_raw, tags = tags, name = 'Bundled')
     def txcontent_to_digits(self, dataitem_raw, txid_raw, block_raw):
         #self.remote_data.add()
         return self.root.hash_to_digits(dataitem_raw)
     def add_forward(self):
             loader = self.root.remote_data.loader
         #with self.root:
-            block = loader.block_height(self.next_block) # this could go faster with block2 i think, passing to include all txs in cache
-            ar.logger.info(f'Reading block {self.next_block}: {block["indep_hash"]}')
-            for tx in block['txs']:
-                tx_tags = loader.tx_tags(tx)
+            try:
+                block_bytes = loader.block2_height(self.next_block, b'\xff'*125)
+            except ar.ArweaveNetworkException:
+                block_bytes = loader.block2(self.next_block)
+                ar.logger.warning('Peer does not support HTTP GET body data. Try a different peer for faster block processing.')
+            block = ar.Block.frombytes(block_bytes)
+            ar.logger.info(f'Reading block {self.next_block}: {block.indep_hash}')
+            for tx in block.txs:
+                if type(tx) is ar.Transaction:
+                    tx_tags = tx.tags
+                else:
+                    tx_tags = loader.tx_tags(tx)
                 if not get_tags(tx_tags, b'Bundle-Format'):
                     continue
-                #try:
-                header = ANS104BundleHeader.from_tags_stream(tx_tags, loader.stream(tx))
-                #except ar.ArweaveNetworkException:
-                #    ensure_tag(self.root.remote_data.additional_tags, b'Block-Missing-Data', block['indep_hash'])
+                try:
+                    header = ANS104BundleHeader.from_tags_stream(tx_tags, loader.stream(tx))
+                except ar.ArweaveNetworkException:
+                    ensure_tag(self.root.remote_data.tags, b'Block-Missing-Data', block.indep_hash)
+                    continue
                 #if header is None:
                 #    continue
                 for bundled_id in header.length_by_id.keys():
-                    self.root[bundled_id] = (tx, block['indep_hash'], bundled_id)
-            change_tag(self.root.remote_data.additional_tags, 'Block-Max', str(self.next_block))
+                    self.root[bundled_id] = (tx, block.indep_hash, bundled_id)
+            change_tag(self.root.remote_data.tags, 'Block-Max', str(self.next_block), condense_to_one=True)
             self.next_block += 1
     def save(self):
         id, bundle, block = self.root.ids
@@ -879,8 +911,7 @@ class BundleIndexer:
 #            index[self.entrysize * indexids
 
 
-
-if __name__ == '__main__':
+def makedefault():
     ar.logging.basicConfig(level=ar.logging.INFO)
     from bundlr import Node
     from bundlr.loader import Loader
@@ -900,16 +931,22 @@ if __name__ == '__main__':
     }
     wallet = Wallet.from_data(wallet)
     node = Node()
-    peer = Peer()#ar.multipeer.MultiPeer()
-    loader = Loader(node, peer, wallet)
+    #peer = Peer(Peer('https://arweave.net').health()['origins'][0]['endpoint'])#ar.multipeer.MultiPeer()
+    peer = Peer('http://gateway-3.arweave.net:1984')
+    gateway = Peer('https://arweave.net')
+    loader = Loader(node, gateway, peer, wallet)
     indexer = BundleIndexer(loader, 'arweave-index.json')
+    return indexer
+
+if __name__ == '__main__':
     #import pdb; pdb.set_trace()
+    indexer = makedefault()
     then = time.time()
     while True:
         indexer.add_forward()
         now = time.time()
         #if True:
-        if now - then > 60*30:
+        if now - then > 60*60:
             then = now
             indexer.save()
             print(indexer.root.ids)

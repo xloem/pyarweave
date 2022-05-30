@@ -4,20 +4,24 @@ from ar.utils import create_tag, normalize_tag, get_tags
 import threading
 
 class Loader:
-    def __init__(self, node, peer, wallet):
+    def __init__(self, node, gateway, peer, wallet):
         self.node = node
+        self.gateway = gateway
         self.peer = peer
         self.wallet = wallet
 
     def __getattr__(self, attr):
         return getattr(self.peer, attr)
 
+    def graphql(self, *params, **kwparams):
+        return self.gateway.graphql(*params, **kwparams)
+
     def send(self, data, tags):
         di = DataItem(data = data)
         if type(tags) is dict:
-            di.tags = [create_tag(name, value, 2) for name, value in tags.items()]
+            di.header.tags = [create_tag(name, value, 2) for name, value in tags.items()]
         else:
-            di.tags = [normalize_tag(tag) for tag in tags]
+            di.header.tags = [normalize_tag(tag) for tag in tags]
         di.sign(self.wallet.rsa)
         result = self.node.send_tx(di.tobytes())
         return result['id']
