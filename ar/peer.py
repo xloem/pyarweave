@@ -4,7 +4,8 @@ import requests
 import json
 
 from . import DEFAULT_API_URL, logger, ArweaveException, ArweaveNetworkException
-from .utils import response_stream_to_file_object, b64dec, arbindec, ChunkStream
+from .stream import PeerStream, GatewayStream
+from .utils import b64dec, arbindec
 
 def binary_to_term(b):
     # arweave.live seems to replace nonascii chars with this sequence :/
@@ -873,17 +874,15 @@ class Peer(HTTPClient):
 
     def gateway_stream(self, txid, ext ='', range = None):
         if range is not None:
-            headers = {'Range':f'bytes={range[0]}-{range[1]}'}
+            return GatewayStream.from_txid(self, txid)
         else:
-            headers = {}
-        response = self._get(txid + ext, headers = headers, stream = True)
-        return response_stream_to_file_object(response)
+            return GatewayStream.from_txid(self, txid, range[0], range[1] - range[0])
 
     def peer_stream(self, txid, range = None):
         if range is not None:
-            return io.BufferedReader(ChunkStream.from_txid(self, txid, range[0], range[1]-range[0]), 0x40000)
+            return io.BufferedReader(PeerStream.from_txid(self, txid, range[0], range[1]-range[0]), 0x40000)
         else:
-            return io.BufferedReader(ChunkStream.from_txid(self, txid), 0x40000)
+            return io.BufferedReader(PeerStream.from_txid(self, txid), 0x40000)
 
     # below are used with https://github.com/ar-io/arweave-gateway
 
