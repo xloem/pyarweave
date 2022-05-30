@@ -451,7 +451,14 @@ class Peer(HTTPClient):
           "offset": "<a number from [start_offset, start_offset + chunk size), relative to other chunks>"
         }
         '''
-        response = self._post(json_data, 'chunk', headers={'arweave-data-root':json_data['data_root'],'arweave-data-size':int(json_data['data_size'])})
+        response = self._post(
+            json_data,
+            'chunk',
+            headers={
+                'arweave-data-root': json_data['data_root'],
+                'arweave-data-size': str(json_data['data_size'])
+            }
+        )
         return response.text # OK
 
     def block_announcement(self, block_announcement):
@@ -974,19 +981,20 @@ def reupload(peer, tx):
     stream = peer.gateway_stream(tx)
 
     chunks = generate_transaction_chunks(stream)
+    stream = peer.gateway_stream(tx)
     if chunks['data_root'] != peer.tx_data_root(tx):
         logger.error(f'{peer.api_url}: Data for {tx} mismatches generated root.')
         return False
-    logger.warning(f'uhh trying to reupload {txid}')
+    logger.warning(f'uhh trying to reupload {tx}')
     offset = 0
     for proof, chunk in zip(chunks['proofs'], chunks['chunks']):
         chunk_size = chunk.data_size
         chunk = {
-            'data_root': b64enc(chunks['data_root']),
+            'data_root': chunks['data_root'],
             'data_size': str(chunks['chunks'][-1].max_byte_range),
             'data_path': b64enc(proof.proof),
             'offset': str(proof.offset),
-            'chunk': b64enc(data[offset:offset+chunk_size])
+            'chunk': b64enc(stream.read(chunk_size))
         }
         peer.send_chunk(chunk)
         offset+=chunk_size
