@@ -206,51 +206,8 @@ class response_stream_to_file_object:
     def __del__(self):
         self.close()
 
-#import io
-#class ChunkStream(io.RawIOBase):
-#    def __init__(self, peer, first_offset, last_offset = float('inf'), aligned_offset = None):
-#        self.peer = peer
-#        if aligned_offset is None:
-#            aligned_offset = first_offset
-#        self.aligned_offset = aligned_offset
-#        self.stream_first = first_offset
-#        self.stream_last = last_offset
-#        self.offset = first_offset
-#        self.chunk = None
-#        self.chunk_first = None
-#    def readable(self):
-#        return True
-#    def seekable(self):
-#        return True
-#    def tell(self):
-#        return self.offset - self.stream_first
-#    def seek(self, offset, whence = io.SEEK_SET):
-#        offset += {
-#            io.SEEK_SET: self.stream_first,
-#            io.SEEK_CUR: self.offset,
-#            io.SEEK_END: self.stream_last + 1
-#        }[whence]
-#    
-#        #if self.chunk is not None and (offset < self.chunk_first or offset > self.chunk_last):
-#        #    self.chunk = None
-#
-#        aligned_offset = offset - self.aligned_offset 
-#        aligned_offset -= aligned_offset % 0x40000
-#        self.chunk_first = aligned_offset + self.aligned_offset
-#        
-#        self.offset = offset
-#    def readinto(self, b):
-#        if self.chunk is None:
-#            self.chunk_first = self.peer.chunk_size
-#            result = self.peer.chunk2(self.offset)
-#            self.chunk = resuolt['chunk']
-    
-import bisect, io, ar
+import io, ar
 class ChunkStream(io.RawIOBase):
-
-    # This could be much improved by calculating based on the 256KiB portions that
-    # started after the 2.5 fork. To implement, see for example:
-    # https://github.com/ArweaveTeam/arweave/blob/master/apps/arweave/src/ar_data_sync.erl#L118
 
     @classmethod
     def from_txid(cls, peer, txid, offset = 0, length = None):
@@ -262,141 +219,51 @@ class ChunkStream(io.RawIOBase):
         stream_last = tx_offset['offset']
         stream_size = tx_offset['size']
         stream_first = stream_last - stream_size + 1
+        stream_end = stream_first + stream_size
 
-        logger.info(f'Requesting bounds of first chunk of {txid} ...')
-        first_size = peer.chunk_size(stream_first)
-        offset_pairs = [
-            (stream_first, stream_first + first_size - 1),
-        ]
+        return cls(peer, stream_first, offset, stream_end if length is None else min(stream_first + offset + length, stream_end))
 
-        if stream_first + first_size - 1 < stream_last:
-            logger.info(f'Requesting bounds of last chunk of {txid} ...')
-            offset_pairs.append(
-                (stream_last - peer.chunk_size(stream_last) + 1, stream_last),
-            )
-
-        logger.info(f'{txid} measured.')
-
-        return cls(peer, offset_pairs, stream_first + offset, stream_last if length is None else stream_first + offset + length)
-
-    def __init__(self, peer, first_last_chunk_offset_pairs, stream_first_offset, stream_last_offset = float('inf')):
-        # instead of first/last chunk pairs, this could use pairs of absolute and suboffset  . if the suboffset is negative, it would be from the end. then fewer requests are needed.
+    def __init__(self, peer, tx_start_offset, start_offset, end_offset):
         self.peer = peer
-        self.chunks = [*first_last_chunk_offset_pairs]
-        for first, last in self.chunks:
-            assert first <= last
-        self.chunks.sort(key = lambda interval: interval[0])
-        assert stream_first_offset <= stream_last_offset
-        self.stream_first = stream_first_offset
-        self.stream_last = stream_last_offset
+        assert end_offset >= start_offset
+        self.start = start_offset
+        self.tx_start = tx_start_offset
+        self.end = end_offset
+        self.offset = self.start
         self.chunk = None
-        self.chunk_first, self.chunk_last = self.chunks[0]
-        self.offset = self.chunk_first
-        self.seek(0, io.SEEK_SET)
     def tell(self):
-        return self.offset - self.stream_first
-    def chunk_relative_tell(self):
-        return self.offset - self.chunk_first
-    def chunk_start_tell(self):
-        return self.chunk_first
-    def absolute_tell(self):
-        return self.offset
+        return self.offset - self.start
     def readable(self):
         return True
     def seekable(self):
         return True
     def seek(self, offset, whence = io.SEEK_SET):
         if whence == io.SEEK_SET:
-            offset += self.stream_first
+            offset += self.start
         elif whence == io.SEEK_CUR:
             offset += self.offset
         elif whence == io.SEEK_END:
-            offset += self.stream_last + 1
-
-        if offset >= self.chunk_first and offset <= self.chunk_last:
-            self.offset = offset
-            return self.offset - self.stream_first
-
-        if offset <= 0:
-            self.chunk = None
-            self.chunk_first, self.chunk_last = self.chunks[0]
-            self.offset = self.stream_first
-            assert self.chunk_first == self.offset
-            return self.offset - self.stream_first
-        elif offset > self.stream_last:
-            self.chunk = None
-            self.chunk_first, self.chunk_last = self.chunks[-1]
-            self.offset = self.stream_last + 1
-            assert self.chunk_last + 1 == self.offset
-            return self.offset - self.stream_first
-
-        def walk_left(nearest_idx):
-            chunk_first, chunk_last = self.chunks[nearest_idx]
-            additional = []
-            while chunk_first > offset:
-                chunk_last = chunk_first - 1 # needed so chunk_size gets the _earlier_ chunk
-                logger.info(f'{self.stream_first}: Requesting bounds of chunk before {chunk_first - self.stream_first} to find {offset - self.stream_first}...')
-                chunk_first = chunk_last - self.peer.chunk_size(chunk_last) + 1
-                additional.append((chunk_first, chunk_last))
-            if len(additional):
-                assert additional[0][1] + 1 == self.chunks[nearest_idx][0]
-            self.chunks[nearest_idx : nearest_idx] = additional[::-1]
-            #for a, b in zip(self.chunks[:-1], self.chunks[1:]):
-            #    assert a[0] <= a[1]
-            #    assert a[1] < b[0]
-            return chunk_first, chunk_last
-
-        def walk_right(nearest_idx):
-            chunk_first, chunk_last = self.chunks[nearest_idx]
-            additional = []
-            while chunk_last < offset:
-                chunk_first = chunk_last + 1 # needed so chunk_size gets the _next_ chunk
-                logger.info(f'{self.stream_first}: Requesting bounds of chunk after {chunk_last - self.stream_first} to find {offset - self.stream_first}...')
-                chunk_last = chunk_first + self.peer.chunk_size(chunk_first) - 1
-                additional.append((chunk_first, chunk_last))
-            if len(additional):
-                assert self.chunks[nearest_idx][1] + 1 == additional[0][0]
-            self.chunks[nearest_idx + 1 : nearest_idx + 1] = additional
-            #for a, b in zip(self.chunks[:-1], self.chunks[1:]):
-            #    assert a[0] <= a[1]
-            #    assert a[1] < b[0]
-            return chunk_first, chunk_last
-
-        right_idx = bisect.bisect_right(self.chunks, offset, key=lambda interval: interval[1])
-        left_idx = right_idx - 1
-        if right_idx == 0:
-            # all intervals are after offset
-            chunk_first, chunk_last = walk_left(right_idx)
-        elif right_idx == len(self.chunks):
-            # all intervals are prior to offset
-            chunk_first, chunk_last = walk_right(left_idx)
-
-        elif self.chunks[right_idx][0] - offset < offset - self.chunks[left_idx][1]:
-            # the interval on the right is closer
-            chunk_first, chunk_last = walk_left(right_idx)
-        else:
-            # the interval on the left is closer
-            chunk_first, chunk_last = walk_right(left_idx)
-
-        assert chunk_first <= offset and chunk_last >= offset
-
-        self.chunk = None
-        self.chunk_first = chunk_first
-        self.chunk_last = chunk_last
-        self.offset = offset
-        return self.offset - self.stream_first
+            offset += self.end
+        
+        self.offset = max(self.start, min(self.end, offset))
+        return self.offset - self.start
 
     def readinto(self, b):
-        if self.chunk is None:
-            result = self.peer.chunk2(self.chunk_first)
-            self.chunk = result['chunk']
-            assert len(self.chunk) - 1 == self.chunk_last - self.chunk_first 
+        if self.offset >= self.end:
+            return 0
 
-        bytecount = min(len(b), self.chunk_last + 1 - self.offset)
+        if (
+                self.chunk is None or
+                self.chunk.start_offset > self.offset or
+                self.chunk.end_offset <= self.offset
+        ):
+            self.chunk = ar.Chunk.frombytes(self.peer.chunk2(self.offset + self.tx_start))
+            assert self.chunk.start_offset <= self.offset
+            assert self.chunk.end_offset > self.offset
 
-        suboffset = self.offset - self.chunk_first
-        b[ : bytecount] = self.chunk[suboffset : suboffset + bytecount]
-
+        bytecount = min(len(b), self.chunk.end_offset - self.offset)
+        suboffset = self.offset - self.chunk.start_offset
+        b[ : bytecount] = self.chunk.data[suboffset : suboffset + bytecount]
         self.seek(bytecount, io.SEEK_CUR)
 
         return bytecount
