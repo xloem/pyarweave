@@ -1,7 +1,9 @@
-import erlang
 import io
-import requests
+import time
+
+import erlang
 import json
+import requests
 
 from . import DEFAULT_API_URL, logger, ArweaveException, ArweaveNetworkException
 from .stream import PeerStream, GatewayStream
@@ -40,6 +42,10 @@ class HTTPClient:
             return response
         except requests.exceptions.RequestException as exc:
             logger.error(exc, response.text)
+            if response.status_code == 429:
+                # too many requests
+                time.sleep(60)
+                return self._post(*params, **request_kwparams)
             raise ArweaveNetworkException(response.text, exc, response)
 
     def _post(self, data, *params, headers = {}, **request_kwparams):
@@ -71,6 +77,10 @@ class HTTPClient:
             return response
         except requests.exceptions.RequestException as exc:
             logger.error('{}\n{}\n\n{}'.format(exc,response.text, data))
+            if response.status_code == 429:
+                # too many requests
+                time.sleep(60)
+                return self._post(data, *params, headers = {}, **request_kwparams)
             raise ArweaveNetworkException(response.text, exc, response)
 
 class Peer(HTTPClient):
