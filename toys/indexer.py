@@ -168,13 +168,13 @@ class BackedStructur:
                 }''')['data']['transaction']
             if result is None:
                 ar.logger.info(f'Waiting for {b64enc(self._id_raw)} to propagate ...')
-                time.sleep(30)
+                time.sleep(60)
                 return self.bundle_raw
             bundledIn = result['bundledIn']
             block = result['block']
             if bundledIn is None and block is None:
                 ar.logger.info(f'Waiting for {b64enc(self._id_raw)} to be mined ...')
-                time.sleep(30)
+                time.sleep(60)
                 return self.bundle_raw
             if bundledIn is None:
                 self._bundle_raw = ZEROS32
@@ -201,12 +201,12 @@ class BackedStructur:
             result = interim_result['data']['transaction']
             if result is None:
                 ar.logger.info(f'Waiting for {b64enc(id_raw)} to propagate ...')
-                time.sleep(30)
+                time.sleep(60)
                 return self.block_raw
             block = result['block']
             if block is None:
                 ar.logger.info(f'Waiting for {b64enc(id_raw)} to be mined ...')
-                time.sleep(30)
+                time.sleep(60)
                 return self.block_raw
             else:
                 self._block_raw = b64dec(block['id'])
@@ -931,9 +931,10 @@ def makedefault():
     }
     wallet = Wallet.from_data(wallet)
     node = Node()
-    #peer = Peer(Peer('https://arweave.net').health()['origins'][0]['endpoint'])#ar.multipeer.MultiPeer()
-    peer = Peer('http://gateway-3.arweave.net:1984')
+    peer = Peer(Peer('https://arweave.net').health()['origins'][-1]['endpoint'])#ar.multipeer.MultiPeer()
+    #peer = Peer('http://gateway-3.arweave.net:1984')
     gateway = Peer('https://arweave.net')
+    #peer = gateway
     loader = Loader(node, gateway, peer, wallet)
     indexer = BundleIndexer(loader, 'arweave-index.json')
     return indexer
