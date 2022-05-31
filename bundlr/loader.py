@@ -11,10 +11,7 @@ class Loader:
         self.wallet = wallet
 
     def __getattr__(self, attr):
-        return getattr(self.peer, attr)
-
-    def graphql(self, *params, **kwparams):
-        return self.gateway.graphql(*params, **kwparams)
+        return getattr(self.peer if '2' in attr or 'sync_' in attr else self.gateway, attr)
 
     def send(self, data, tags):
         di = DataItem(data = data)
@@ -42,8 +39,8 @@ class Loader:
         return data
     def tags(self, txid, bundleid = None, blockid = None):
         if bundleid is not None:
-            tags = self.gateway.tx_tags(bundleid)
-            stream = self.gateway.stream(bundleid)
+            tags = self.tx_tags(bundleid)
+            stream = self.stream(bundleid)
             if b'json' in get_tags(tags, b'Bundle-Format'):
                 bundle = Bundle.from_tags_stream(tags, stream)
                 tags = None
@@ -58,7 +55,7 @@ class Loader:
                 dataitem = ANS104DataItemHeader.fromstream(stream)
                 tags = dataitem.tags
         else:
-            tags = self.gateway.tx_tags(bundleid)
+            tags = self.tx_tags(txid)
         logger.warning(f'{txid} was not verified') # check the hash tree
         return tags
 
