@@ -62,13 +62,14 @@ class IntervalVector:
         low = self.low if low is None else low
         high = self.high if high is None else high
 
-        # lowest interval_high >= low 
+        # lowest interval_such that high >= low 
         idx = bisect.bisect_left(self.ranges, low, key=self.key_high, lo=lo_bound, hi=hi_bound)
         while idx < len(self.ranges) and low <= high:
             idx_low, idx_high, _ = self.ranges[idx]
             if idx_low > low:
                 return low
             low = idx_high + 1
+            idx += 1
         if low <= high:
             return low
         else:
@@ -78,13 +79,14 @@ class IntervalVector:
         low = self.low if low is None else low
         high = self.high if high is None else high
 
-        # highest interval_low <= high
+        # highest interval_such that low <= high
         idx = bisect.bisect_right(self.ranges, high, key=self.key_low, lo=max(lo_bound, first), hi=hi_bound) - 1
         while idx >= 0 and high >= low:
             idx_low, idx_high, _ = self.ranges[idx]
             if idx_high < high:
                 return high
             high = idx_low - 1
+            idx -= 1
         if high >= low:
             return high
         else:
@@ -250,14 +252,6 @@ def test_usv_set_range():
         (32,91,False),
     ]
 
-#def make_bit_range(low, high):
-#    '''Returns an integer with bits low through high set, inclusively.'''
-#    # fill a bit vector of the right length
-#    set_bits = (1 << ((high+1) - low)) - 1
-#    # shift it into the right place
-#    set_bits <<= low
-#    return set_bits
-
 class ContentTrackedPeer(Peer):
     def __init__(self, *params, **kwparams):
         super().__init__(*params, **kwparams)
@@ -337,7 +331,11 @@ def wrap_offset(callable):
 class MultiPeer:
     def __init__(self, initial_peers = None):
         if initial_peers is None:
-            initial_peers = [origin['endpoint'].split('://',1)[1] for origin in Peer().health()['origins']]
+            initial_peers = []
+            self.protected_peers = set(origin['endpoint'].split('://',1)[1] for origin in Peer().health()['origins'])
+            initial_peers = set(self.protected_peers)
+        else:
+            self.protected_peers = set()
         self.backup_peer_queue = set()
         self.peer_queue = set(initial_peers)
         self.peers = []
@@ -349,37 +347,50 @@ class MultiPeer:
                 self.peers = [peer] + self.peers[:idx] + self.peers[idx+1:]
                 logger.info(f'I have a peer with this content. Returning {peer.api_url}.')
                 return peer
+        uninteresting_peers = set()
+        # there may be a better way to do this to ensure that all peers are enumerated.
         while True:
             if not len(self.peer_queue):
                 if not len(self.peers):
-                    self.peer_queue = self.backup_peer_queue
+                    self.peer_queue = self.backup_peer_queue.difference(uninteresting_peers)
                     self.backup_peer_queue = set()
                 else:
-                    self.peer_queue.update(self.peers[0].peers())
-            peer = ContentTrackedPeer('http://' + self.peer_queue.pop(), timeout = 1, retries = 0)
-            if peer.has_range(first, last):
-                try:
+                    self.peer_queue.update(set(self.peers[0].peers()).difference(uninteresting_peers))
+            if not len(self.peer_queue):
+                self.backup_peer_queue = uninteresting_peers
+                return None
+            peer_addr = self.peer_queue.pop()
+            peer = ContentTrackedPeer('http://' + peer_addr, timeout = 1, retries = 0)
+            try:
+                has_content = peer.has_range(first, last)
+                if has_content:
+                    if peer_addr in self.protected_peers:
+                        logger.info(f'I found that {peer.api_url} has this content but the peer is protected. Moving on ...')
+                        self.backup_peer_queue.add(peer_addr)
+                        self.peer_queue.update(set(peer.peers()).difference(uninteresting_peers))
+                        continue
                     peer.chunk2((first+last)//2)
-                except:
-                    pass
-                else:
                     self.peers[:0] = [peer]
                     logger.info(f'I found that {peer.api_url} has this content. Added to peer list and returning.')
                     return peer
-            else:
-                logger.info(f'I checked {peer.api_url} but they did not have the content. Moving on ...')
+                logger.info(f'I checked {peer.api_url} but they did not have the content. Moving on ... {len(self.peer_queue)}')
+                if peer_addr not in self.protected_peers:
+                    uninteresting_peers.add(peer_addr)
                 if not len(self.peers):
                     try:
-                        more_peers = peer.peers()
-                        self.backup_peer_queue.update(peer.peers())
+                        more_peers = set(peer.peers()).difference(uninteresting_peers)
+                        self.backup_peer_queue.update(more_peers)
                     except:
                         pass
+            except Exception as exc:
+                logger.info(f'{peer.api_url} raised {exc}. Moving on ...')
     def tx_peer(self, txid):
         if not len(self.peers):
-            peer = self.chunk_peer(1)
+            #peer = Peer().current_block()['height']#self.chunk_peer(1)
+            txoffset = Peer().tx_offset(txid)
         else:
-            peer = self.peers[0]
-        txoffset = peer.tx_offset(txid)
+            #peer = self.peers[0]
+            txoffset = self.peers[0].tx_offset(txid)
         last = txoffset['offset']
         size = txoffset['size']
         first = last - size + 1
