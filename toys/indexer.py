@@ -340,7 +340,7 @@ class TableDoc:
                 block_raw = entry[:48]
                 txid_raw = entry[48:80]
                 dataitem_raw = entry[80:112]
-                entry = (self.txcontent_to_digits(dataitem_raw, txid_raw,block_raw), (block_raw, txid_raw, dataitem_raw))
+                entry = (self.txcontent_to_digits(dataitem_raw=dataitem_raw, txid_raw=txid_raw,block_raw=block_raw), (block_raw, txid_raw, dataitem_raw))
             else:
                 raise StructureException('unhandled table entry type', type)
             self.obj_list[hash_digit] = (entry_type, entry)
@@ -371,7 +371,8 @@ class TableDoc:
                 )
                 example_digit = example_digits[subtable.depth]
                 subtable.obj_list[example_digit] = (entry_type, entry) # replaced entry
-                subtable.add(hash_digits, block_raw, txid_raw, dataitem_raw) # new entry
+                # since evaluation continues, the new entry will be added below
+                #subtable.add(hash_digits, block_raw, txid_raw, dataitem_raw) # new entry
                 entry = subtable
                 entry_type = self.TABLE
         if entry_type == self.EMPTY:
@@ -382,11 +383,12 @@ class TableDoc:
         elif entry_type == self.DATA:
             entry_digits, entry_ids = entry
             if entry_digits == hash_digits:
+                assert entry_ids != (block_raw, txid_raw, dataitem_raw)
                 entry_type = self.MANY
                 parent = None
                 txcontent_to_digits = self.txids_to_digits
-                hash_digits = txcontent_to_digits(dataitem_raw, txid_raw, block_raw)
-                entry_digits = txcontent_to_digits(*entry_ids)
+                hash_digits = txcontent_to_digits(dataitem_raw=dataitem_raw, txid_raw=txid_raw, block_raw=block_raw)
+                entry_digits = txcontent_to_digits(block_raw=entry_ids[0], txid_raw=entry_ids[1], dataitem_raw=entry_ids[2])
             else:
                 entry_type = self.TABLE
                 parent = self
@@ -590,8 +592,8 @@ class BundleIndexer:
         else:
             id_raw = None
             tags = [
-                create_tag('Block-Min', str(start_block)),
-                create_tag('Block-Max', str(start_block))
+                create_tag('Block-Min', str(start_block), True),
+                create_tag('Block-Max', str(start_block), True)
             ]
             self.prev_block = start_block
             self.next_block = start_block
@@ -613,7 +615,7 @@ class BundleIndexer:
                 if type(tx) is ar.Transaction:
                     tx_tags = tx.tags
                 else:
-                    tx_tags = loader.tx_tags(tx)
+                    tx_tags = loader.tags(tx)
                 if not get_tags(tx_tags, b'Bundle-Format'):
                     continue
                 try:
@@ -624,7 +626,7 @@ class BundleIndexer:
                 #if header is None:
                 #    continue
                 for bundled_id in header.length_by_id.keys():
-                    self.root[bundled_id] = (tx, block.indep_hash, bundled_id)
+                    self.root[bundled_id] = (block.indep_hash, tx, bundled_id)
             change_tag(self.root.remote_data.tags, 'Block-Max', str(self.next_block), condense_to_one=True)
             self.next_block += 1
     def save(self):
