@@ -4,21 +4,23 @@ from ar import Peer, ArweaveNetworkException, ArweaveException, ANS104BundleHead
 from bundlr import Node
 
 class BundleWatcher:
-    def __init__(self, peer = Peer()):
+    def __init__(self, peer = Peer(), height = None):
         self.peer = peer
+        self.height = height
     def run(self):
         mark = time.time()
-        height = self.peer.height()
+        if self.height is None:
+            self.height = self.peer.height()
         missing_txs = set()
         old_pending_txs = set()
-        old_block_txs = set(self.peer.block_height(height)['txs'])
+        old_block_txs = set(self.peer.block_height(self.height)['txs'])
         while True:
             new_pending_txs = set(self.peer.tx_pending())
             new_height = self.peer.height()
             new_block_txs = set()
-            for new_height in range(height + 1, new_height + 1):
-                height = new_height
-                new_block_txs.update(set(self.peer.block_height(height)))
+            for new_height in range(self.height + 1, new_height + 1):
+                self.height = new_height
+                new_block_txs.update(set(self.peer.block_height(self.height)['txs']))
             else:
                 new_block_txs = old_block_txs
                 
