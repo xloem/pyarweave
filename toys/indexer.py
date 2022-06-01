@@ -380,7 +380,9 @@ class TableDoc:
             example_digits, *example_ids = next(iter(entry))
             if example_digits == hash_digits:
                 # if they are same, add this one.
-                entry.add(hash_digits, block_raw, txid_raw, dataitem_raw)
+                entry_type = self.TABLE
+                # since evaluation continues, the new entry will be added below
+                #entry.add(hash_digits, block_raw, txid_raw, dataitem_raw)
             else:
                 # if they differ, add a table.
                 subtable = TableDoc(
@@ -407,7 +409,11 @@ class TableDoc:
         elif entry_type == self.DATA:
             entry_digits, entry_ids = entry
             if entry_digits == hash_digits:
-                assert entry_ids != (block_raw, txid_raw, dataitem_raw)
+                try:
+                    assert entry_ids != (block_raw, txid_raw, dataitem_raw)
+                except:
+                    import pdb; pdb.set_trace()
+                    'here is breakpoint'
                 entry_type = self.MANY
                 parent = None
                 txcontent_to_digits = self.txids_to_digits
@@ -575,33 +581,6 @@ class TableDoc:
         hash = hash.digest()
         return self.hash_to_digits(hash)
 
-class HashMap(TableDoc):
-    def __init__(self, txcontent_to_digits, size, id = None, block = None, dataitem = None, loader = None, tags = {}):
-        if loader is None:
-            loader = ar.Peer()
-        id_raw = b64dec_if_not_bytes(id)
-        block_raw = b64dec_if_not_bytes(block)
-        dataitem_raw = b64dec_if_not_bytes(dataitem)
-        super().__init__(txcontent_to_digits, size = size, item_count = None, id_raw = id_raw, block_raw = block_raw, dataitem_raw = dataitem_raw, loader = loader)
-
-from ar.utils.merkle import compute_root_hash, generate_transaction_chunks
-def reupload(peer, tx):
-    data = peer.data(tx)
-
-    chunks = generate_transaction_chunks(io.BytesIO(data))
-    offset = 0
-    for proof, chunk in zip(chunks['proofs'], chunks['chunks']):
-        chunk_size = chunk.data_size
-        chunk = {
-            'data_root': b64enc(chunks['data_root']).decode(),
-            'data_size': str(len(data)),
-            'data_path': b64enc(proof.proof),
-            'offset': str(proof.offset),
-            'chunk': b64enc(data[offset:offset+chunk_size])
-        }
-        peer.send_chunk(chunk)
-        offset+=chunk_size
-
 
 from ar import ANS104BundleHeader
 class BundleIndexer:
@@ -642,40 +621,85 @@ class BundleIndexer:
             self.prev_block = start_block
             self.next_block = start_block
         self.root = TableDoc(loader, self.txcontent_to_digits, size=size, id_raw = id_raw, tags = tags, name = 'DataItems')
+        self.lock = threading.Lock()
+    def get_all(self, dataitem_id):
+        return [
+            dict(
+                block = b64enc(block_raw),
+                bundle = b64enc(bundle_raw),
+                dataitem = b64enc(dataitem_raw)
+            )
+            for block_raw, bundle_raw, dataitem_raw in self.root[dataitem_id]
+        ]
+    def get_one(self, dataitem_id):
+        results = self.get_all(dataitem_id)
+        if len(results) > 1:
+            raise Exception('multiple results, use get_all?')
+        if len(results) < 1:
+            raise KeyError(f'{dataitem_id} not found from block {self.prev_block+1} through {self.next_block-1}')
+        return results[0]
+    def __getitem__(self, dataitem_id):
+        results = self.get_all(dataitem_id)
+        if len(results) == 0:
+            raise KeyError(f'{dataitem_id} not found from block {self.prev_block+1} through {self.next_block-1}')
+        if len(results) == 1:
+            return results[0]
+        else:
+            return results
     def txcontent_to_digits(self, dataitem_raw, txid_raw, block_raw):
         #self.remote_data.add()
         return self.root.hash_to_digits(dataitem_raw)
-    def add_forward(self):
-            loader = self.root.remote_data.loader
-        #with self.root:
+    def _insert_block(self, height):
+        loader = self.root.remote_data.loader
+        try:
+            block_bytes = loader.block2_height(height, b'\xff'*125)
+        except ar.ArweaveNetworkException:
+            block_bytes = loader.block2(height)
+            ar.logger.warning('Peer does not support HTTP GET body data. Try a different peer for faster block processing.')
+        block = ar.Block.frombytes(block_bytes)
+        ar.logger.info(f'Reading block {height}: {block.indep_hash}')
+
+        # fetch missing tx tags
+        txs_tags = WorkerPool(
+            action = lambda tx: tx.tags if type(tx) is ar.Transaction else loader.tags(tx),
+            max_jobs = loader.gateway.max_outgoing_connections,
+        ).process(block.txs)
+
+        for tx_tags, tx in zip(txs_tags, block.txs):
+            if not get_tags(tx_tags, b'Bundle-Format'):
+                continue
             try:
-                block_bytes = loader.block2_height(self.next_block, b'\xff'*125)
+                header = ANS104BundleHeader.from_tags_stream(tx_tags, loader.stream(tx))
             except ar.ArweaveNetworkException:
-                block_bytes = loader.block2(self.next_block)
-                ar.logger.warning('Peer does not support HTTP GET body data. Try a different peer for faster block processing.')
-            block = ar.Block.frombytes(block_bytes)
-            ar.logger.info(f'Reading block {self.next_block}: {block.indep_hash}')
-
-            # fetch missing tx tags
-            txs_tags = WorkerPool(
-                action = lambda tx: tx.tags if type(tx) is ar.Transaction else loader.tags(tx),
-                max_jobs = 10, # default requests urllib3 connection pool size
-            ).process(block.txs)
-
-            for tx_tags, tx in zip(txs_tags, block.txs):
-                if not get_tags(tx_tags, b'Bundle-Format'):
-                    continue
-                try:
-                    header = ANS104BundleHeader.from_tags_stream(tx_tags, loader.stream(tx))
-                except ar.ArweaveNetworkException:
+                with self.lock:
                     ensure_tag(self.root.remote_data.tags, b'Block-Missing-Data', block.indep_hash)
-                    continue
-                #if header is None:
-                #    continue
+                continue
+            with self.lock:
                 for bundled_id in header.length_by_id.keys():
                     self.root[bundled_id] = (block.indep_hash, tx, bundled_id)
-            change_tag(self.root.remote_data.tags, 'Block-Max', str(self.next_block), condense_to_one=True)
+
+    def add_forward(self, count=1, at_once=3):
+        WorkerPool(
+            action = self._insert_block,
+            max_jobs = at_once,
+        ).process(range(self.next_block, self.next_block + count))
+        if self.prev_block == self.next_block:
+            self.prev_block -= 1
+        self.next_block += count
+        change_tag(self.root.remote_data.tags, 'Block-Max', str(self.next_block - 1), condense_to_one=True)
+
+    def add_backward(self, count=1, at_once=3):
+        WorkerPool(
+            action = self._insert_block,
+            max_jobs = at_once
+        ).process(range(max(0,self.prev_block - count + 1), self.prev_block + 1))
+        if self.next_block == self.prev_block:
             self.next_block += 1
+        self.prev_block -= count
+        if self.prev_block < -1:
+            self.prev_block = -1
+        change_tag(self.root.remote_data.tags, 'Block-Min', str(self.prev_block + 1), condense_to_one=True)
+
     def save(self):
         id, bundle, block = self.root.ids
         with open(self.filename + '.new', 'wt') as file:
@@ -687,277 +711,6 @@ class BundleIndexer:
         os.rename(self.filename + '.new', self.filename)
     def __del__(self):
         self.root.flush()
-
-#class TableDoc(BackedStructure):
-#        super().__init__(size = size, item_count = item_count, item_size = 33, id_raw = id_raw, loader = loader)
-#        self.
-#    def __getitem__(self, idx):
-#        item = super().__getitem__(idx)
-#        return item[-1], item[:-1]
-#    def __setitem__(self, idx, data_and_type):
-#        data, type = data_and_type
-#        super().__setitem__(idx, data + bytes([type]))
-#
-#class HashMap:
-#    def __init__(self, document_size, id = None, loader = None):
-#        if loader is None:
-#            loader = ar.Peer()
-#        self.id_raw = utfdec_if_not_bytes(id)
-#        self.root = TableDoc(size = document_size, id_raw = self.id_raw, loader = loader)
-#    
-#
-##class Array:
-##    def __init__(self, entry_size, max_doc_size, id_raw = None):
-##        self.entry_size = entry_size
-##        self.max_doc_size = max_doc_size
-##    def
-##
-##class Index:
-##    def __init__(self, max_doc_size, entry_size, id_raw = None, bytes = None):
-##        self.entry_size = entry_size
-##        self.max_doc_size = document_size
-##        self.id_raw = id_raw
-##        self.bytes = bytes
-##
-##    def 
-#class HashIndex(BackedStructur):
-#    def __init__(self, max_doc_size, id_raw = None, item_size = 32, type_size = 1, byteorder = 'big'):
-#        self.type_Size = type_size
-#        super().__init__(size = max_doc_size, item_size = (item_size+type_size), id_raw = id_raw)
-#        self.byteorder = byteorder
-#    def reduce_hash(self, hash_raw):
-#        hash_int = int.from_bytes(hash_raw, self.byteorder)
-#        smaller_hash, idx = divmod(hash_int, self.item_count)
-#        return idx, smaller_hash
-#    def get_item_type(self, hash_raw):
-#        entry = self[idx]
-#        return entry[:-self.type_size], int.frombytes(entry[-self.type_size:])
-#    def put(self, hash_raw):
-#        self[idx] = hash_raw
-#        
-#        
-#
-#class Index
-#    ENTRYSIZE = 32
-#
-#    TYPE_INDEX = 0 # list of typed documents in a tree
-#    TYPE_DATA = 1 # a single reference to data
-#    #TYPE_DOCINDEX = 2 # 
-#    #TYPE_SHORTLIST = 3
-#    #TYPE_SHORTMAP = 4
-#
-#    zero_entry_raw = bytes(ENTRYSIZE)
-#
-#    def __init__(self, indexid = None, loader = None, index_size = 100000, reverse = False):#, large_list = False):
-#        self.loader = loader if loader is not None else ar.Peer()
-#        self.ids_per_index = index_size // (self.ENTRYSIZE + 1)
-#        self.ids_per_shortmap = index_size // (self.ENTRYSIZE * 2)
-#        self.id_raw = (
-#            b64dec_if_not_bytes(indexid) if indexid is not None else self.zero_entry_raw
-#        )
-#        self.byteorder = 'little' if reverse else 'big'
-#        #self.large_list = large_list
-#
-#    @property
-#    def index_size()
-#        return self.ids_per_index * (self.ENTRYSIZE + 1)
-#
-#    def hash_raw_to_ids(self, recordhash):
-#        #recordhash = utf8enc_if_not_bytes(recordhash)
-#        recordid = int.from_bytes(recordhash, byteorder=self.byteorder)
-#        digits = []
-#        while recordid:
-#            number, digit = divmod(number, self.ids_per_index - 1)
-#            digits.append(digit + 1)
-#        digits.append(0)
-#        return digits
-#
-#    #def ids_to_name(self, recordids):
-#    #    if recordids[-1] = 0:
-#    #        recordids = recordids[:-1]
-#    #    recordid = 0
-#    #    length = len(ids)
-#    #    while len(ids):
-#    #        id = ids.pop()
-#    #        recordid = recordid * (self.ids_per_per_index - 1) + (id  - 1)
-#    #    recordname = int.to_bytes(recordid, length, self.byteorder)
-#    #    return recordname
-#
-#    def create_single_valued_index(self, record_id, raw_entry, type):
-#        index = bytearray(self.index_size)
-#        offset = record_id * (self.ENTRYSIZE + 1)
-#        index[offset : offset + self.ENTRYSIZE] = entry_raw
-#        index[offset + self.ENTRYSIZE] = entry_type
-#        return self.loader.send(index)
-#
-#    def create_index(self, recordids_value_raw_entry_raw_type_tuples):
-#        plan = {}
-#        for recordids, value_raw, entry_raw, type) in recordids_value_entry_raw_type_tuples:
-#            recordid = recordids[0]
-#            entry = plan.setdefault(recordid, [])
-#            entry.append((
-#                recordids[1:], value_raw, entry_raw, type
-#            ))
-#        for recordid, entries in plan.items():
-#            needs_expansion = len(entries) > self.ids_per_shortmap:
-#            if not needs_expansion and len(entries) > 1:
-#                for recordids, entry_raw, type in entries: # could this get too large?
-#                    if type != self.TYPE_DOCID:
-#                        needs_expansion = True
-#                        break
-#            if needs_expansion:
-#                entry_raw = self.create_index(entries))
-#                type = self.TYPE_DOCINDEX
-#            elif len(entries) > 1:
-#                entry_raw = self.create_shortmap(
-#                type = self.TYPE_
-#    #    index = bytearray(self.index_size)
-#    #    for recordids, (entry_raw, type) in raw_entries_and_type_by_recordid:
-#    #        offset = recordid * (self.ENTRYSIZE + 1)
-#    #        index[offset : offset + self.ENTRYSIZE] = entry_raw
-#    #        index[offset + self.ENTRYSIZE] = entry_type
-#    #    return self.loader.send(index)
-#
-#    def read_index_for(self, indexid_raw, recordid):
-#        with self.loader.stream(indexid_raw) as stream:
-#            stream.seek(recordid * (self.ENTRYSIZE+1))
-#            next_entry_raw = stream.read(self.ENTRYSIZE)
-#            next_type = strem.read(1)[0]
-#        return next_type, next_try_raw
-#
-#    def add_to_index(self, indexbytes, record
-#
-#    def read_list(self, indexid_raw, index_type, hash_raw = None):
-#        if index_type == self.TYPE_DOCINDEX:
-#            yield from Index(indexid_raw, self.loader, self.index_size)
-#        #elif index_type == self.TYPE_SHORTLIST:
-#        #    with self.loader.stream(indexid_raw) as stream:
-#        #        while True:
-#        #            id_raw = stream.read(self.ENTRYSIZE)
-#        #            if not id_raw:
-#        #                break
-#        #            yield b64enc(id_raw)
-#        elif index_type = self.TYPE_SHORTMAP:
-#            with self.loader.stream(indexid_raw) as stream:
-#                while True:
-#                    key_raw = stream.read(self.ENTRYSIZE)
-#                    if not key_raw:
-#                        break
-#                    value_raw = stream.read(self.ENTRYSIZE)
-#                    if hash_raw is None or key_raw == hash_raw:
-#                        yield b64enc(value_raw)
-#        else:
-#            raise StructureError('index type is not a list', indexid_raw, index_type)
-#
-#    #def read_index_for(self, indexid_raw, recordid):
-#    #    with self.loader.stream(indexid_raw) as stream:
-#    #        indextype = stream.read(1)[0]
-#    #        if indextype == self.TYPE_DOCINDEX:
-#    #            if indexid_raw != self.id_raw:
-#    #                data = None
-#    #                break
-#    #            else:
-#    #                indextype = self.TYPE_NAMEINDEX
-#
-#    #        if indextype == self.TYPE_NAMEINDEX:
-#    #            stream.seek(1 + recordid * self.ENTRYSIZE)
-#    #            data = stream.read(self.ENTRYSIZE)
-#
-#    #        elif indextype = self.TYPE_SHORTLIST:
-#    #            data = []
-#    #            while True:
-#    #                entry_raw = stream.read(self.ENTRYSIZE)
-#    #                if not entry_raw:
-#    #                    break
-#    #                data.append(entry_raw)
-#    #            data = [stream.read(self.ENTRYSIZE) for x in range(self.ids_per_index)]
-#
-#    #        else:
-#    #            raise StructureError('unrecognized index type', b64enc(indexid_raw), indextype)
-#    #    return indextype, data
-#
-#    def insert(self, recordhash, id):
-#        recordhash_raw = utf8enc_if_not_bytes(recordhash)
-#        recordids = self.hash_raw_to_ids(recordhash_raw)
-#        id_raw = utf8enc_if_not_Bytes(id)
-#
-#        if self.id_raw == self.zero_entry_raw:
-#            # make first index and first shortmap
-#            first_shortmap = recordhash_raw + id_raw
-#            first_shortmap_txid = self.loader.send(first_shortmap)
-#            first_index = bytearray(self.index_size)
-#            first_index[recordids[0] * 
-#            
-#        parents = []
-#        indexid_raw = self.id_raw
-#
-#        if indexid_raw == self.zero_entry_raw:
-#            # insert here
-#        # when inserting, it helps ot have the recordhash
-#
-#        # when inserting, basically we search for it, getting back helpful data.
-#
-#    def find(self, recordhash):
-#        recordhash_raw = utf8enc_if_not_bytes(recordhash)
-#        recordids = self.hash_raw_to_ids(recordhash_raw)
-#        indexid_raw = self.id_raw
-#        index_type = self.TYPE_NAMEINDEX
-#
-#        for depth, recordid in enumerate(recordids):
-#            if indexid_raw == self.zero_entry_raw:
-#                return []
-#            index_type, indexid_raw = self.read_index_for(indexid_raw, recordid)
-#            if index_type != self.TYPE_NAMEINDEX:
-#                # when ending early, it simply means the hash is unique now
-#                break
-#
-#        if index_type == self.TYPE_NAMEINDEX:
-#            raise StructureError('record hash did not end with record list')
-#
-#        yield from self.read_list(indexid_raw, index_type)
-#
-#        #if indextype == self.TYPE_SHORTLIST:
-#        #    yield from (b64enc(record_raw) for record_raw in records_raw)
-#
-#        #elif indexType == self.TYPE_DOCINDEX:
-#        #    yield from Index(indexid, self.peer, self.index_size)
-#
-#        #elif indextype == self.TYPE_NAMEINDEX:
-#        #    raise StructureError('record hash did not end with record list')
-#
-#        #else:
-#        #    raise StructureError('unhandled index type', b64enc(indexid_raw), indextype)
-#
-#    def __iter__(self):
-#        indexid_raw = self.id_raw
-#        if indexid == self.zeros_bytes
-#            return
-#        indexid = b64enc(indexid_raw)
-#
-#        with self.peer.stream(indexid) as stream:
-#            entry_raw = stream.read(self.ENTRYSIZE)
-#            if entry_raw != self.zeros_bytes:
-#                yield b64enc(entry_raw)
-#            while True:
-#                entryid_raw = stream.read(self.ENTRYSIZE)
-#                yield from self.__class__(entryid_raw, peer = self.peer, index_size = self.index_size, byteorder = self.byteorder)
-#            
-#            
-#
-#    def insert(self, recordhash, entry):
-#        # make a new tree
-#        
-#        # we can reverse recordhash, convert it to an int, and process it in base ids_per_index
-#        recordhash = utf8enc_if_not_bytes(recordhash)
-#        recordid = int.from_bytes(recordhash, byteorder='little')
-#        indexids = number_to_digits(recordid)
-#        
-#        index = self.id_raw
-#        
-#        for depth, indexid in enumerate(indexids)
-#            if index is None:
-#                index = bytearray(self.index_size)
-#            index[self.entrysize * indexids
 
 
 def makedefault():
@@ -980,9 +733,12 @@ def makedefault():
     }
     wallet = Wallet.from_data(wallet)
     node = Node()
-    peer = Peer(Peer('https://arweave.net').health()['origins'][-1]['endpoint'])#ar.multipeer.MultiPeer()
+    peer = Peer(#ar.multipeer.MultiPeer()
+            Peer('https://arweave.net').health()['origins'][-1]['endpoint'],
+            outgoing_connections = 10
+    )#ar.multipeer.MultiPeer()
     #peer = Peer('http://gateway-3.arweave.net:1984')
-    gateway = Peer('https://arweave.net')
+    gateway = Peer('https://arweave.net', outgoing_connections = 1000)
     #peer = gateway
     loader = Loader(node, gateway, peer, wallet)
     indexer = BundleIndexer(loader, 'arweave-index.json')
@@ -994,10 +750,16 @@ if __name__ == '__main__':
     #for item in indexer.root:
     #    print(item)
     then = time.time()
+    chunksize = 50
+    if (indexer.next_block - 1) % chunksize != 0:
+        indexer.add_forward(chunksize - ((indexer.next_block - 1) % chunksize))
+    if (indexer.prev_block + 1) % chunksize != 0:
+        indexer.add_backward(((indexer.prev_block + 1) % chunksize))
     while True:
-        indexer.add_forward()
-        #for item in indexer.root:
-        #    print(item)
+        WorkerPool(
+            action = lambda function: function(chunksize, 5),
+            max_jobs = 2
+        ).process((indexer.add_forward))#, indexer.add_backward))
         now = time.time()
         #if True:
         if now - then > 60*60*5:

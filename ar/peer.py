@@ -17,12 +17,19 @@ def binary_to_term(b):
     return erlang.binary_to_term(b)
 
 class HTTPClient:
-    def __init__(self, api_url, timeout = None, retries = 5):
+    def __init__(self, api_url, timeout = None, retries = 5, outgoing_connections = 10):
         self.api_url = api_url
         self.session = requests.Session()
+        self.max_outgoing_connections = outgoing_connections
         max_retries = requests.adapters.Retry(total=retries, backoff_factor=0.1, status_forcelist=[500,502,503,504]) # from so
-        self.session.mount('http://', requests.adapters.HTTPAdapter(max_retries=max_retries))
-        self.session.mount('https://', requests.adapters.HTTPAdapter(max_retries=max_retries))
+        adapter = requests.adapters.HTTPAdapter(
+            pool_connections = outgoing_connections,
+            pool_maxsize = outgoing_connections,
+            max_retries = max_retries,
+            pool_block = True
+        )
+        self.session.mount('http://', adapter)
+        self.session.mount('https://', adapter)
         self.timeout = timeout
 
     def _get(self, *params, **request_kwparams):
@@ -88,8 +95,8 @@ class Peer(HTTPClient):
     # - https://docs.arweave.org/developers/server/http-api
     # - https://github.com/ArweaveTeam/arweave/blob/master/apps/arweave/src/ar_http_iface_middleware.erl#L132
     # - https://github.com/ArweaveTeam/arweave/blob/master/apps/arweave/src/ar_http_iface_client.erl
-    def __init__(self, api_url = DEFAULT_API_URL, timeout = None, retries = 5):
-        super().__init__(api_url, timeout, retries)
+    def __init__(self, api_url = DEFAULT_API_URL, timeout = None, retries = 5, outgoing_connections = 10):
+        super().__init__(api_url, timeout, retries, outgoing_connections)
 
     def info(self):
         '''
