@@ -279,19 +279,37 @@ class BackedStructur:
             self._block_raw = None
             self.dirty = False
 
+class WorkerPool:
+    def __init__(self, action, max_jobs):
+        self.action = action
+        self.max_jobs = max_jobs
+        self.job_semaphore = threading.BoundedSemaphore(max_jobs)
+    def single_job(self, data, idx):
+        data[idx] = self.action(data[idx])
+        self.job_semaphore.release()
+    def process(self, data):
+        data = [*data]
+        for idx in range(len(data)):
+            self.job_semaphore.acquire() # blocks on max_jobs acquires
+            threading.Thread(target=self.single_job, args=(data, idx,)).start()
+        for done in range(self.max_jobs): # wait for all to complete
+            self.job_semaphore.acquire()
+        return data
+
 class TableDoc:
     EMPTY = 0
     TABLE = 1
     DATA = 2
     MANY = 3
 
-    def __init__(self, loader, txcontent_to_digits, name = 'TableDoc', size = None, item_count = None, id_raw = None, dataitem_raw = None, block_raw = None, parent = None, tags = [], type = TABLE):
+    def __init__(self, loader, txcontent_to_digits, name = 'TableDoc', size = None, item_count = None, id_raw = None, dataitem_raw = None, block_raw = None, parent = None, tags = [], type = TABLE, outer_idx = None):
         if dataitem_raw is None or dataitem_raw == id_raw:
             bundle_raw = None
         else:
             bundle_raw = id_raw
             id_raw = dataitem_raw
         self.type = type
+        self.outer_idx = outer_idx
         self.txcontent_to_digits = txcontent_to_digits
         self.remote_data = BackedStructur(loader, size = size, item_count = item_count, item_size = 113, tags = tags, id_raw = id_raw, bundle_raw = bundle_raw, block_raw = block_raw, name = name)
         if parent is None:
@@ -332,17 +350,21 @@ class TableDoc:
                     id_raw = txid_raw,
                     block_raw = block_raw,
                     loader = self.remote_data.loader,
-                    txcontent_to_digits = self.txcontent_to_digits if type is self.TABLE else self.txids_to_digits,
-                    parent = self if type is self.TABLE else None,
-                    type = entry_type
+                    txcontent_to_digits = self.txcontent_to_digits if entry_type is self.TABLE else self.txids_to_digits,
+                    parent = self if entry_type is self.TABLE else None,
+                    type = entry_type,
+                    outer_idx = hash_digit
                 )
             elif entry_type == self.DATA:
                 block_raw = entry[:48]
                 txid_raw = entry[48:80]
                 dataitem_raw = entry[80:112]
-                entry = (self.txcontent_to_digits(dataitem_raw=dataitem_raw, txid_raw=txid_raw,block_raw=block_raw), (block_raw, txid_raw, dataitem_raw))
+                digits = self.txcontent_to_digits(dataitem_raw=dataitem_raw, txid_raw=txid_raw,block_raw=block_raw)
+                if self.outer_idx is not None and self.type is self.TABLE:
+                    assert digits[self.depth - 1] == self.outer_idx
+                entry = (digits, (block_raw, txid_raw, dataitem_raw))
             else:
-                raise StructureException('unhandled table entry type', type)
+                raise StructureException('unhandled table entry type', entry_type)
             self.obj_list[hash_digit] = (entry_type, entry)
         return entry_type, entry
 
@@ -367,7 +389,9 @@ class TableDoc:
                     txcontent_to_digits = self.txcontent_to_digits,
                     size = self.remote_data.size,
                     item_count = self.remote_data.item_count,
-                    parent = self
+                    parent = self,
+                    type = self.TABLE,
+                    outer_idx = hash_digit,
                 )
                 example_digit = example_digits[subtable.depth]
                 subtable.obj_list[example_digit] = (entry_type, entry) # replaced entry
@@ -389,22 +413,26 @@ class TableDoc:
                 txcontent_to_digits = self.txids_to_digits
                 hash_digits = txcontent_to_digits(dataitem_raw=dataitem_raw, txid_raw=txid_raw, block_raw=block_raw)
                 entry_digits = txcontent_to_digits(block_raw=entry_ids[0], txid_raw=entry_ids[1], dataitem_raw=entry_ids[2])
+                name = b64enc(self.digits_to_hash_raw(hash_digits))
             else:
                 entry_type = self.TABLE
                 parent = self
                 txcontent_to_digits = self.txcontent_to_digits
+                name = f'{self.remote_data.name}-{hash_digit}'
             entry = TableDoc(
                 loader = self.remote_data.loader,
                 txcontent_to_digits = txcontent_to_digits,
                 size = self.remote_data.size,
                 item_count = self.remote_data.item_count,
                 parent = parent,
-                type = entry_type
+                type = entry_type,
+                outer_idx = hash_digit,
+                name = name
             )
             entry.add(entry_digits, *entry_ids) # add back replaced entry
             entry.add(hash_digits, block_raw, txid_raw, dataitem_raw) # new entry
         else:
-            raise StructureException('unhandled table entry type', type)
+            raise StructureException('unhandled table entry type', entry_type)
         self.obj_list[hash_digit] = (entry_type, entry)
 
     def get(self, hash_digits):
@@ -419,7 +447,7 @@ class TableDoc:
         elif entry_type == self.MANY:
             return [*entry]
         else:
-            raise StructureException('unhandled table entry type', type)
+            raise StructureException('unhandled table entry type', entry_type)
 
     def needs_flush(self):
         if self.remote_data.dirty:
@@ -497,12 +525,28 @@ class TableDoc:
         self.add(digits, block_raw, txid_raw, dataitem_raw)
 
     def __iter__(self):
+        
         for idx, (entry_type, entry) in enumerate(self.obj_list):
             if entry_type == self.DATA:
-                yield self.get_filling_if_needed(idx)[1]
+                digits, (block_raw, txid_raw, dataitem_raw) = self.get_filling_if_needed(idx)[1]
+                assert digits[self.depth] == idx
+                # this is already how the digits are generated
+                #assert digits == self.txcontent_to_digits(block_raw=block_raw, txid_raw=txid_raw, dataitem_raw=dataitem_raw)
+                yield digits, (block_raw, txid_raw, dataitem_raw)
         for idx, (entry_type, entry) in enumerate(self.obj_list):
-            if entry_type in (self.TABLE, self.MANY):
+            if entry_type is self.TABLE:
                 yield from self.get_filling_if_needed(idx)[1]
+            elif entry_type is self.MANY:
+                digits = None
+                count = 0
+                for _, (block_raw, txid_raw, dataitem_raw) in self.get_filling_if_needed(idx)[1]:
+                    if digits is None:
+                        digits = self.txcontent_to_digits(dataitem_raw=dataitem_raw, txid_raw=txid_raw, block_raw=block_raw)
+                    count += 1
+                    yield digits, (block_raw, txid_raw, dataitem_raw)
+                assert count > 1
+            #if entry_type in (self.TABLE, self.MANY):
+            #    yield from self.get_filling_if_needed(idx)[1]
 
     def __enter__(self):
         return self
@@ -597,7 +641,7 @@ class BundleIndexer:
             ]
             self.prev_block = start_block
             self.next_block = start_block
-        self.root = TableDoc(loader, self.txcontent_to_digits, size=size, id_raw = id_raw, tags = tags, name = 'Bundled')
+        self.root = TableDoc(loader, self.txcontent_to_digits, size=size, id_raw = id_raw, tags = tags, name = 'DataItems')
     def txcontent_to_digits(self, dataitem_raw, txid_raw, block_raw):
         #self.remote_data.add()
         return self.root.hash_to_digits(dataitem_raw)
@@ -611,12 +655,14 @@ class BundleIndexer:
                 ar.logger.warning('Peer does not support HTTP GET body data. Try a different peer for faster block processing.')
             block = ar.Block.frombytes(block_bytes)
             ar.logger.info(f'Reading block {self.next_block}: {block.indep_hash}')
-            for tx in block.txs:
-                if type(tx) is ar.Transaction:
-                    logger.warning(f'{tx.id} was not verified') # check the block
-                    tx_tags = tx.tags
-                else:
-                    tx_tags = loader.tags(tx)
+
+            # fetch missing tx tags
+            txs_tags = WorkerPool(
+                action = lambda tx: tx.tags if type(tx) is ar.Transaction else loader.tags(tx),
+                max_jobs = 10, # default requests urllib3 connection pool size
+            ).process(block.txs)
+
+            for tx_tags, tx in zip(txs_tags, block.txs):
                 if not get_tags(tx_tags, b'Bundle-Format'):
                     continue
                 try:
@@ -945,12 +991,17 @@ def makedefault():
 if __name__ == '__main__':
     #import pdb; pdb.set_trace()
     indexer = makedefault()
+    #for item in indexer.root:
+    #    print(item)
     then = time.time()
     while True:
         indexer.add_forward()
+        #for item in indexer.root:
+        #    print(item)
         now = time.time()
         #if True:
         if now - then > 60*60*5:
             then = now
             indexer.save()
             print(indexer.root.ids)
+            #break

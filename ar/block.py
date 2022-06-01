@@ -66,7 +66,7 @@ class Block:
         if attr.endswith('_raw'):
             return b64dec(getattr(self, attr[:-4]))
         else:
-            return setup().__getattr__(attr)
+            return super().__getattr__(attr)
 
     @property
     def usd_to_ar_rate(self):
