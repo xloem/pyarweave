@@ -458,7 +458,7 @@ class TableDoc:
             if self.remote_data._id_raw is None:
                 print(f'TableDoc.flush(): flushing new tabledoc with depth {self.depth}')
             else:
-                print(f'TableDoc.flush(): flushing tabledoc {b64enc(self.remote_data.id_raw)} with depth {self.depth}')
+                print(f'TableDoc.flush(): flushing tabledoc {b64enc(self.remote_data._id_raw)} with depth {self.depth}')
             with self.remote_data:
                 for idx, (entry_type, entry) in enumerate(self.obj_list):
                     if isinstance(entry, (bytes, bytearray)):
@@ -613,6 +613,7 @@ class BundleIndexer:
             ar.logger.info(f'Reading block {self.next_block}: {block.indep_hash}')
             for tx in block.txs:
                 if type(tx) is ar.Transaction:
+                    logger.warning(f'{tx.id} was not verified') # check the block
                     tx_tags = tx.tags
                 else:
                     tx_tags = loader.tags(tx)
@@ -949,7 +950,7 @@ if __name__ == '__main__':
         indexer.add_forward()
         now = time.time()
         #if True:
-        if now - then > 60*60:
+        if now - then > 60*60*5:
             then = now
             indexer.save()
             print(indexer.root.ids)
