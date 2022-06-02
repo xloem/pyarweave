@@ -3,8 +3,10 @@ import io
 from ar.utils import (
     arbinenc, arintenc, arbindec, arintdec, b64enc_if_not_str, b64enc, b64dec
 )
+from ar.utils.deep_hash import deep_hash
 from .chunk import Chunk
 from .transaction import Transaction
+from . import FORK_2_4
 
 # note: there are actually three different block formats in chain history,
 # according to https://docs.arweave.org/developers/server/http-api#block-format
@@ -240,3 +242,74 @@ class Block:
             else:
                 stream.write(arbinenc(b64dec(tx),                  24))
         return stream.getvalue()
+
+    #def compute_hash(self):
+    #    bds = self._get_data_segment()
+    #    return bds, ar_weave:indep_hash(BDS, Hash, Nonce, self.poa)
+
+    # from ar_block.erl
+    def _get_data_segment(self):
+        bds_base = self._get_data_segment_base()
+        block_index_merkle = self.hash_list_merkle_raw
+        return deep_hash([
+            bds_base,
+            str(self.timestamp).encode(),
+            str(self.last_retarget).encode(),
+            str(self.diff).encode(),
+            str(self.cumulative_diff).encode(),
+            str(self.reward_pool).encode(),
+            self.wallet_list_raw,
+            block_index_merkle
+        ])
+    def _get_data_segment_base(self):
+        if self.height >= FORK_2_4:
+            props = [
+                str(self.height).encode(),
+                self.prev_block_raw,
+                self.tx_root_raw,
+                [
+                    b64dec(tx.id if type(tx) is Transaction else tx)
+                    for tx in self.tx
+                ],
+                str(self.block_size).encode(),
+                str(self.weave_size).encode(),
+                self.reward_addr_raw,
+                self.tags
+            ]
+            if self.height >= FORK_2_5:
+                props2 = [
+                    str(self.usd_to_ar_rate[0]).encode(),   
+                    str(self.usd_to_ar_rate[1]).encode(),   
+                    str(self.scheduled_usd_to_ar_rate[0]).encode(),
+                    str(self.scheduled_usd_to_ar_rate[1]).encode(),
+                    str(self.packing_threshold).encode(),
+                    str(self.strict_chunk_threshold),
+                    *props
+                ]
+            else:
+                props2 = props
+            return deep_hash(props2)
+        else:
+            return deep_hash([
+                str(self.height).encode(),
+                self.prev_block_raw,
+                self.tx_root_raw,
+                [
+                    b64dec(tx.id if type(tx) is Transaction else tx)
+                    for tx in self.tx
+                ],
+                str(self.block_size).encode(),
+                str(self.weave_size).encode(),
+                self.reward_addr_raw,
+                [[tag['name'].encode(), tag['value'].encode()] for tag in self.tags],
+                [
+                    str(self.poa_option).encode(),
+                    self.poa_tx_path,
+                    self.poa_data_path,
+                    self.poa_chunk
+                ]
+            ])
+    def _encode_tags(self):
+        if self.height >= FORK_2_5:
+            return 
+
