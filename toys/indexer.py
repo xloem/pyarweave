@@ -12,23 +12,31 @@ from ar.utils import b64enc, b64dec, b64dec_if_not_bytes, utf8enc_if_not_bytes, 
 # Composed of table documents.
 
 # Table document structure:
-# TODO: TYPE could be a bitfield at the start of the document, which would provide
-#       for including more records. For further compression, BLOCKHASH and TXHASH
-#       could be indexed for reuse.
 #
 # not implemented: VERSION         1 byte = 1
+#     also todo: TYPE could be a bitfield at the start of the document, which would provide
+#                for including more records. For further compression, BLOCKHASH and TXHASH
+#                could be indexed for reuse.
 #
 # A sequence of 113 byte entries:
-####### note, it would be more efficient to retrieve tx tags and sigs if the 2-byte index in the alphabetized block were here
 #   TYPE          1 byte
 #   BLOCKHASH    48 bytes
 #   TXHASH       32 bytes
 #   DATAITEMHASH 32 bytes
+#      # note: it would be more efficient to retrieve tx tags and sigs if the
+#      # 2-byte index in the alphabetized block were here, for block2 requests
 #
 # Additionally, table documents have the properties:
 #   COUNT
 #   DEPTH
 
+# TYPE
+#   May take on one of the following values:
+#   0 or TYPE_EMPTY
+#   1 or TYPE_TABLE: DATAITEMHASH is a table document with 1 greater DEPTH.
+#   2 or TYPE_DATA: DATAITEMHASH is a data document
+#   3 or TYPE_MANY: DATAITEMHASH is a table document tree where all children match.
+#
 # BLOCKHASH, TXHASH, DATAITEMHASH
 #   These refer uniquely to a range of bytes within a transaction containing
 #   another document.
@@ -40,12 +48,6 @@ from ar.utils import b64enc, b64dec, b64dec_if_not_bytes, utf8enc_if_not_bytes, 
 #
 #   The document is defined as occupying the entire data portion of DATAITEMHASH.
 #
-# TYPE
-#   May take on one of the following values:
-#   0 or TYPE_EMPTY
-#   1 or TYPE_TABLE: DATAITEMHASH is a table document with 1 greater DEPTH.
-#   2 or TYPE_DATA: DATAITEMHASH is a data document
-#   3 or TYPE_MANY: DATAITEMHASH is a table document tree where all children match.
 #
 # COUNT
 #   Count is the number of txhashes in a table, and is equal to the size divided by 113.
@@ -115,6 +117,11 @@ ZEROS48 = bytes(48)
 import threading
 
 class BackedStructur:
+    '''An array of 'bytes' items all the same size.
+
+    The contents are backed by data held in a single transaction on the weave.
+    When the contents are flushed, if there are changes, a new transaction is deployed.
+    '''
     def __init__(self, loader, size = None, item_count = None, item_size = None, id_raw = None, bundle_raw = None, block_raw = None, tags = [], name = 'TableDoc'):
         if size is None:
             size = item_count * item_size
@@ -136,6 +143,7 @@ class BackedStructur:
         self.name = name
 
         if self.id_raw is None:
+            # shadow could be a stream for large arrays and sparse access
             self.shadow = bytearray(size)
         else:
             self.shadow = None
@@ -280,20 +288,35 @@ class BackedStructur:
             self.dirty = False
 
 class WorkerPool:
-    def __init__(self, action, max_jobs):
+    def __init__(self, action, max_jobs, retries = 4):
         self.action = action
         self.max_jobs = max_jobs
+        self.retries = retries
         self.job_semaphore = threading.BoundedSemaphore(max_jobs)
-    def single_job(self, data, idx):
-        data[idx] = self.action(data[idx])
+    def single_job(self, data, idx, exceptions):
+        tries = self.retries
+        exc = None
+        while tries > 0:
+            try:
+                data[idx] = self.action(data[idx])
+                exc = None
+                break
+            except Exception as e:
+                tries -= 1
+                exc = e if exc is None else exc
+        if exc is not None:
+            exceptions.append((idx, exc))
         self.job_semaphore.release()
     def process(self, data):
         data = [*data]
+        exceptions = []
         for idx in range(len(data)):
-            self.job_semaphore.acquire() # blocks on max_jobs acquires
-            threading.Thread(target=self.single_job, args=(data, idx,)).start()
+            self.job_semaphore.acquire() # blocks at max_jobs
+            threading.Thread(target=self.single_job, args=(data, idx, exceptions)).start()
         for done in range(self.max_jobs): # wait for all to complete
             self.job_semaphore.acquire()
+        if len(exceptions):
+            raise exceptions[0][1]
         return data
 
 class TableDoc:
@@ -445,7 +468,7 @@ class TableDoc:
         hash_digit = hash_digits[self.depth]
         entry_type, entry = self.get_filling_if_needed(hash_digit)
         if entry_type == self.EMPTY:
-            return None
+            return []
         elif entry_type == self.TABLE:
             return entry.get(hash_digits)
         elif entry_type == self.DATA:
@@ -585,6 +608,8 @@ class TableDoc:
 from ar import ANS104BundleHeader
 class BundleIndexer:
     def __init__(self, loader, filename, id = None, bundle = None, block = None, start_block = 761917, size = 100000):
+        self.debug_blocks = set()
+        self.debug_bundles = set()
         self.filename = filename
         if os.path.exists(filename):
             with open(filename) as file:
@@ -658,6 +683,8 @@ class BundleIndexer:
             ar.logger.warning('Peer does not support HTTP GET body data. Try a different peer for faster block processing.')
         block = ar.Block.frombytes(block_bytes)
         ar.logger.info(f'Reading block {height}: {block.indep_hash}')
+        assert block.indep_hash not in self.debug_blocks
+        self.debug_blocks.add(block.indep_hash)
 
         # fetch missing tx tags
         txs_tags = WorkerPool(
@@ -668,14 +695,16 @@ class BundleIndexer:
         for tx_tags, tx in zip(txs_tags, block.txs):
             if not get_tags(tx_tags, b'Bundle-Format'):
                 continue
+            assert tx not in self.debug_bundles
+            self.debug_bundles.add(tx)
             try:
                 header = ANS104BundleHeader.from_tags_stream(tx_tags, loader.stream(tx))
             except ar.ArweaveNetworkException:
                 with self.lock:
                     ensure_tag(self.root.remote_data.tags, b'Block-Missing-Data', block.indep_hash)
                 continue
-            with self.lock:
-                for bundled_id in header.length_by_id.keys():
+            for bundled_id in header.length_by_id.keys():
+                with self.lock:
                     self.root[bundled_id] = (block.indep_hash, tx, bundled_id)
 
     def add_forward(self, count=1, at_once=3):
@@ -692,7 +721,7 @@ class BundleIndexer:
         WorkerPool(
             action = self._insert_block,
             max_jobs = at_once
-        ).process(range(max(0,self.prev_block - count + 1), self.prev_block + 1))
+        ).process(range(max(0,self.prev_block - count + 1), self.prev_block + 1, -1))
         if self.next_block == self.prev_block:
             self.next_block += 1
         self.prev_block -= count
@@ -734,13 +763,14 @@ def makedefault():
     wallet = Wallet.from_data(wallet)
     node = Node()
     peer = Peer(#ar.multipeer.MultiPeer()
-            Peer('https://arweave.net').health()['origins'][-1]['endpoint'],
+            Peer('https://arweave.net').health()['origins'][0]['endpoint'],
             outgoing_connections = 10
     )#ar.multipeer.MultiPeer()
+    #peer = ar.multipeer.MultiPeer(timeout=60*60)
     #peer = Peer('http://gateway-3.arweave.net:1984')
-    gateway = Peer('https://arweave.net', outgoing_connections = 1000)
+    gateway = Peer('https://arweave.net', outgoing_connections = 512)
     #peer = gateway
-    loader = Loader(node, gateway, peer, wallet)
+    loader = Loader(node, gateway, peer, wallet)#, prefer_peer=True)
     indexer = BundleIndexer(loader, 'arweave-index.json')
     return indexer
 
@@ -750,19 +780,21 @@ if __name__ == '__main__':
     #for item in indexer.root:
     #    print(item)
     then = time.time()
-    chunksize = 50
+    chunksize = 100
     if (indexer.next_block - 1) % chunksize != 0:
         indexer.add_forward(chunksize - ((indexer.next_block - 1) % chunksize))
+        indexer.save()
     if (indexer.prev_block + 1) % chunksize != 0:
         indexer.add_backward(((indexer.prev_block + 1) % chunksize))
+        indexer.save()
     while True:
         WorkerPool(
             action = lambda function: function(chunksize, 5),
             max_jobs = 2
-        ).process((indexer.add_forward))#, indexer.add_backward))
+        ).process((indexer.add_forward,))#, indexer.add_backward))
         now = time.time()
         #if True:
-        if now - then > 60*60*5:
+        if now - then > 60*60:#*5:
             then = now
             indexer.save()
             print(indexer.root.ids)
