@@ -1,4 +1,5 @@
 import io
+import threading
 import time
 
 import erlang
@@ -21,6 +22,7 @@ class HTTPClient:
         self.api_url = api_url
         self.session = requests.Session()
         self.max_outgoing_connections = outgoing_connections
+        self.rate_limit_lock = threading.Lock()
         max_retries = requests.adapters.Retry(total=retries, backoff_factor=0.1, status_forcelist=[500,502,503,504]) # from so
         adapter = requests.adapters.HTTPAdapter(
             pool_connections = outgoing_connections,
@@ -33,6 +35,8 @@ class HTTPClient:
         self.timeout = timeout
 
     def _get(self, *params, **request_kwparams):
+        with self.rate_limit_lock:
+            pass
         if len(params) and params[-1][0] == '?':
             url = self.api_url + '/' + '/'.join(params[:-1]) + params[1]
         else:
@@ -51,11 +55,14 @@ class HTTPClient:
             logger.error(exc, response.text)
             if response.status_code == 429:
                 # too many requests
-                time.sleep(60)
+                with self.rate_limit_lock:
+                    time.sleep(60)
                 return self._post(*params, **request_kwparams)
             raise ArweaveNetworkException(response.text, exc, response)
 
     def _post(self, data, *params, headers = {}, **request_kwparams):
+        with self.rate_limit_lock:
+            pass
         if len(params) and params[-1][0] == '?':
             url = self.api_url + '/' + '/'.join(params[:-1]) + params[1]
         else:
@@ -86,7 +93,8 @@ class HTTPClient:
             logger.error('{}\n{}\n\n{}'.format(exc,response.text, data))
             if response.status_code == 429:
                 # too many requests
-                time.sleep(60)
+                with self.rate_limit_lock:
+                    time.sleep(60)
                 return self._post(data, *params, headers = {}, **request_kwparams)
             raise ArweaveNetworkException(response.text, exc, response)
 
