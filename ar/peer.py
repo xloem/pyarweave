@@ -6,7 +6,7 @@ import erlang
 import json
 import requests
 
-from . import DEFAULT_API_URL, logger, ArweaveException, ArweaveNetworkException
+from . import DEFAULT_API_URL, DEFAULT_REQUESTS_PER_MINUTE_LIMIT, logger, ArweaveException, ArweaveNetworkException
 from .stream import PeerStream, GatewayStream
 from .utils import b64dec, arbindec
 
@@ -18,11 +18,16 @@ def binary_to_term(b):
     return erlang.binary_to_term(b)
 
 class HTTPClient:
-    def __init__(self, api_url, timeout = None, retries = 5, outgoing_connections = 10):
+    def __init__(self, api_url, timeout = None, retries = 10, outgoing_connections = DEFAULT_REQUESTS_PER_MINUTE_LIMIT, requests_per_period = DEFAULT_REQUESTS_PER_MINUTE_LIMIT, period_sec = 60):
         self.api_url = api_url
         self.session = requests.Session()
         self.max_outgoing_connections = outgoing_connections
+        self.outgoing_connection_semaphore = threading.BoundedSemaphore(outgoing_connections)
         self.rate_limit_lock = threading.Lock()
+        self.requests_per_period = requests_per_period
+        self.ratelimited_requests = 0
+        self.period_sec = period_sec
+        self.req_history = []
         max_retries = requests.adapters.Retry(total=retries, backoff_factor=0.1, status_forcelist=[500,502,503,504]) # from so
         adapter = requests.adapters.HTTPAdapter(
             pool_connections = outgoing_connections,
@@ -33,36 +38,122 @@ class HTTPClient:
         self.session.mount('http://', adapter)
         self.session.mount('https://', adapter)
         self.timeout = timeout
+    def __del__(self):
+        self.session.close()
 
-    def _get(self, *params, **request_kwparams):
+    def ratelimited(self):
+        if self.requests_per_period is None:
+            return False
         with self.rate_limit_lock:
-            pass
+            now = time.time()
+            queued_requests = 0
+            for idx, then in enumerate(self.req_history):
+                if then + self.period_sec >= now:
+                    queued_requests_idx = idx
+                    queued_requests = len(self.req_history) - queued_requests_idx
+                    break
+            return queued_requests + self.ratelimited_requests >= self.requests_per_period
+
+    def ratelimit_suggested(self):
+        if self.requests_per_period is None:
+            return False
+        if len(self.req_history) == 0:
+            return False
+        return (time.time() - self.req_history[-1] < self.requests_per_period / period_sec) or self.ratelimited
+
+    def _ratelimit_prologue(self):
+        if self.requests_per_period is None:
+            return
+        with self.rate_limit_lock:
+            now = time.time()
+            queued_requests = 0
+            #if len(self.req_history) >= 3600:
+            #    import pdb; pdb.set_trace()
+            for idx, then in enumerate(self.req_history):
+                if then + self.period_sec >= now:
+                    queued_requests_idx = idx
+                    queued_requests = len(self.req_history) - queued_requests_idx
+                    break
+            if queued_requests + self.ratelimited_requests < self.requests_per_period:
+                #if len(self.req_history) >= self.requests_per_period:
+                #    import pdb; pdb.set_trace()
+                self.req_history.append(now)
+                return
+        #print(f'{self.api_url}: too many requests in prologue')
+        self.on_too_many_requests()
+        with self.rate_limit_lock:
+            now = time.time()
+            if len(self.req_history) >= self.requests_per_period:
+                duration = self.req_history[-self.requests_per_period+1] + self.period_sec - now
+                if duration > 0:
+                    logger.info(f'Sleeping for {int(duration*100)/100}s to respect ratelimit of {self.requests_per_period}req/{self.period_sec}s ...')
+                    time.sleep(duration)
+                    #import pdb; pdb.set_trace()
+                    logger.info(f'Done sleeping for {int(duration*100)/100}s to respect ratelimit of {self.requests_per_period}req/{self.period_sec}s .')
+        return self._ratelimit_prologue()
+
+    def _ratelimit_epilogue(self, success = True):
+        if self.requests_per_period is None:
+            return
+        if success:
+            with self.rate_limit_lock:
+                self.ratelimited_requests = 0
+                now = time.time()
+                for req_idx, req_time in enumerate(self.req_history):
+                    if req_time + self.period_sec > now:
+                        self.req_history = self.req_history[req_idx:]
+                        break
+        else:
+            with self.rate_limit_lock:
+                self.ratelimited_requests += 1
+                now = time.time()
+                #import pdb; pdb.set_trace()
+                if len(self.req_history):
+                    self.period_sec = max(self.period_sec, now - self.req_history[0])
+                if len(self.req_history) - self.ratelimited_requests <= self.requests_per_period:
+                    self.requests_per_period = max(1, len(self.req_history) - self.ratelimited_requests)
+                logger.info(f'Rate limit hit. Dropped rate to {self.requests_per_period}/{self.period_sec}s.')
+            self.on_too_many_requests()
+
+    # _get and _post should just call a _request function to share code
+    def _get(self, *params, **request_kwparams):
+        self._ratelimit_prologue()
+
         if len(params) and params[-1][0] == '?':
             url = self.api_url + '/' + '/'.join(params[:-1]) + params[1]
         else:
             url = self.api_url + '/' + '/'.join(params)
-
-        response = self.session.request(**{'method': 'GET', 'url': url, 'timeout': self.timeout, **request_kwparams})
+        if not self.outgoing_connection_semaphore.acquire(blocking=False):
+            self.on_too_many_connections()
+            logger.info(f'Waiting for connection count limit semaphore to drain...')
+            self.outgoing_connection_semaphore.acquire()
 
         try:
+            try:
+                response = None
+                response = self.session.request(**{'method': 'GET', 'url': url, 'timeout': self.timeout, **request_kwparams})
+            finally:
+                self.outgoing_connection_semaphore.release()
             response.raise_for_status()
             if int(response.headers.get('content-length', 1)) == 0:
                 raise ArweaveException(f'Empty response from {url}')
             if response.status_code not in (200, 206):
                 raise ArweaveException(response.text)
+            self._ratelimit_epilogue(True)
             return response
         except requests.exceptions.RequestException as exc:
             logger.error(exc, response.text)
-            if response.status_code == 429:
+            if response is not None and response.status_code == 429:
                 # too many requests
-                with self.rate_limit_lock:
-                    time.sleep(60)
-                return self._post(*params, **request_kwparams)
-            raise ArweaveNetworkException(response.text, exc, response)
+                self._ratelimit_epilogue(False)
+                return self._get(*params, **request_kwparams)
+            self.on_network_exception(response.text, response.status_code, exc, response)
+            raise ArweaveNetworkException(response.text, response.status_code, exc, response)
+        except Exception:
+            self._ratelimit_epilogue(True)
 
     def _post(self, data, *params, headers = {}, **request_kwparams):
-        with self.rate_limit_lock:
-            pass
+
         if len(params) and params[-1][0] == '?':
             url = self.api_url + '/' + '/'.join(params[:-1]) + params[1]
         else:
@@ -70,41 +161,65 @@ class HTTPClient:
 
         headers = {**headers}
 
-        if type(data) is dict:
-            if type(data) is dict:
-                headers.setdefault('Content-Type', 'application/json')
-            response = self.session.request(**{'method': 'POST', 'url': url, 'json': data, 'headers': headers, 'timeout': self.timeout, **request_kwparams})
-        else:
-            if isinstance(data, (bytes, bytearray)):
-                headers.setdefault('Content-Type', 'application/octet-stream')
-            else:
-                headers.setdefault('Content-Type', 'text/plain')
-            response = self.session.request(**{'method': 'POST', 'url': url, 'data': data, 'headers': headers, 'timeout': self.timeout, **request_kwparams})
+        while True:
+            self._ratelimit_prologue()
+            try:
+                if not self.outgoing_connection_semaphore.acquire(blocking=False):
+                    self.on_too_many_connections()
+                    logger.info(f'Waiting for connection count limit semaphore to drain...')
+                    self.outgoing_connection_semaphore.acquire()
+                try:
+                    response = None
+                    if type(data) is dict:
+                        if type(data) is dict:
+                            headers.setdefault('Content-Type', 'application/json')
+                        response = self.session.request(**{'method': 'POST', 'url': url, 'json': data, 'headers': headers, 'timeout': self.timeout, **request_kwparams})
+                    else:
+                        if isinstance(data, (bytes, bytearray)):
+                            headers.setdefault('Content-Type', 'application/octet-stream')
+                        else:
+                            headers.setdefault('Content-Type', 'text/plain')
+                        response = self.session.request(**{'method': 'POST', 'url': url, 'data': data, 'headers': headers, 'timeout': self.timeout, **request_kwparams})
+                finally:
+                    self.outgoing_connection_semaphore.release()
 
-        # logger.debug('{}\n\n{}'.format(response.text, data))
+                # logger.debug('{}\n\n{}'.format(response.text, data))
+                response.raise_for_status()
+                if int(response.headers.get('content-length', 1)) == 0:
+                    raise ArweaveException(f'Empty response from {url}')
+                self._ratelimit_epilogue(True)
+                # logger.debug('RESPONSE 200: {}'.format(response.text))
+                return response
+            except requests.exceptions.RequestException as exc:
+                text = '' if response is None else response.text
+                status_code = 0 if response is None else response.status_code
+                logger.error('{}\n{}\n\n{}'.format(exc, text, data))
+                if status_code == 429:
+                    # too many requests
+                    self._ratelimit_epilogue(False)
+                    self.on_too_many_requests()
+                    continue
+                self.on_network_exception(text, status_code, exc, response)
+                raise ArweaveNetworkException(text, status_code, exc, response)
+            except Exception:
+                self._ratelimit_epilogue(True)
 
-        try:
-            response.raise_for_status()
-            if int(response.headers.get('content-length', 1)) == 0:
-                raise ArweaveException(f'Empty response from {url}')
-            # logger.debug('RESPONSE 200: {}'.format(response.text))
-            return response
-        except requests.exceptions.RequestException as exc:
-            logger.error('{}\n{}\n\n{}'.format(exc,response.text, data))
-            if response.status_code == 429:
-                # too many requests
-                with self.rate_limit_lock:
-                    time.sleep(60)
-                return self._post(data, *params, headers = {}, **request_kwparams)
-            raise ArweaveNetworkException(response.text, exc, response)
+    def on_network_exception(self, text, code, exception, response):
+        raise ArweaveNetworkException(text, code, exception, response)
+
+    def on_too_many_connections(self):
+        pass
+
+    def on_too_many_requests(self):
+        return self.on_too_many_connections()
 
 class Peer(HTTPClient):
     # peer api [incomplete]:
     # - https://docs.arweave.org/developers/server/http-api
     # - https://github.com/ArweaveTeam/arweave/blob/master/apps/arweave/src/ar_http_iface_middleware.erl#L132
     # - https://github.com/ArweaveTeam/arweave/blob/master/apps/arweave/src/ar_http_iface_client.erl
-    def __init__(self, api_url = DEFAULT_API_URL, timeout = None, retries = 5, outgoing_connections = 10):
-        super().__init__(api_url, timeout, retries, outgoing_connections)
+    def __init__(self, api_url = DEFAULT_API_URL, timeout = None, retries = 5, outgoing_connections = DEFAULT_REQUESTS_PER_MINUTE_LIMIT, requests_per_period = DEFAULT_REQUESTS_PER_MINUTE_LIMIT, period_sec = 60):
+        super().__init__(api_url, timeout, retries, outgoing_connections, requests_per_period, period_sec)
 
     def info(self):
         '''

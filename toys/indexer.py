@@ -3,7 +3,7 @@ import hashlib, math, os, time
 import json
 
 import ar
-#import ar.multipeer
+import ar.multipeer
 
 from ar.utils import b64enc, b64dec, b64dec_if_not_bytes, utf8enc_if_not_bytes, create_tag, change_tag, ensure_tag, get_tags
 
@@ -141,6 +141,7 @@ class BackedStructur:
         self.tags = tags
         self.dirty = False
         self.name = name
+        self.lock = threading.Lock()
 
         if self.id_raw is None:
             # shadow could be a stream for large arrays and sparse access
@@ -164,61 +165,101 @@ class BackedStructur:
 
     @property
     def bundle_raw(self):
-        if self._bundle_raw is None:
-            # instead of graphql, this could call a method on loader that would watch for
-            # bundles and parse them, as in bundlewatcher.py
-            result = self.loader.graphql('''
+        while True:
+            with self.lock:
+                if self._bundle_raw is not None:
+                    return self._bundle_raw
+                # instead of graphql, this could call a method on loader that would watch for
+                # bundles and parse them, as in bundlewatcher.py
+                result = self.loader.graphql('''
+                    query {
+                        transaction(id: "'''+b64enc(self._id_raw)+'''") {
+                            bundledIn { id }
+                            block { id }
+                        }
+                    }''')['data']['transaction']
+                if result is None:
+                    ar.logger.info(f'Waiting for {b64enc(self._id_raw)} to propagate ...')
+                else:
+                    bundledIn = result['bundledIn']
+                    block = result['block']
+                    if bundledIn is None and block is None:
+                        ar.logger.info(f'Waiting for {b64enc(self._id_raw)} to be mined ...')
+                    else:
+                        if bundledIn is None:
+                            self._bundle_raw = ZEROS32
+                        else:
+                            self._bundle_raw = b64dec(bundledIn['id'])
+                    if block is None:
+                        self._block_raw = None
+                    else:
+                        self._block_raw = b64dec(block['id'])
+                    return self._bundle_raw
+            #import pdb; pdb.set_trace()
+            time.sleep(60)
+
+    @property
+    def mined(self):
+        return self.get_mined(peek=False)
+
+    def get_mined(self, peek):
+        if self._block_raw is None:
+            if self._id_raw is None:
+                return False
+            if hasattr(self, '_mined_cache'):
+                if time.time() < self._mined_cache + 30:
+                    return False
+            if peek and self.loader.ratelimit_suggested:
+                return False
+            interim_result = self.loader.graphql('''
                 query {
                     transaction(id: "'''+b64enc(self._id_raw)+'''") {
                         bundledIn { id }
                         block { id }
                     }
-                }''')['data']['transaction']
-            if result is None:
-                ar.logger.info(f'Waiting for {b64enc(self._id_raw)} to propagate ...')
-                time.sleep(60)
-                return self.bundle_raw
-            bundledIn = result['bundledIn']
-            block = result['block']
-            if bundledIn is None and block is None:
-                ar.logger.info(f'Waiting for {b64enc(self._id_raw)} to be mined ...')
-                time.sleep(60)
-                return self.bundle_raw
-            if bundledIn is None:
-                self._bundle_raw = ZEROS32
-            else:
-                self._bundle_raw = b64dec(bundledIn['id'])
-            if block is None:
-                self._block_raw = None
-            else:
-                self._block_raw = b64dec(block['id'])
-        return self._bundle_raw
+                }''')
+            result = interim_result['data']['transaction']
+            if result is None or result['block'] is None:
+                self._mined_cache = time.time()
+                return False
+            with self.lock:
+                if self._block_raw is None:
+                    self._block_raw = b64dec(result['block']['id'])
+                if self._bundle_raw is None:
+                    bundledIn = result['bundledIn']
+                    if bundledIn is None:
+                        self._bundle_raw = ZEROS32
+                    else:
+                        self._bundle_raw = b64dec(bundledIn['id'])
+        return True
 
     @property
     def block_raw(self):
         if self._block_raw is None:
             bundle_raw = self.bundle_raw
-        if self._block_raw is None:
-            id_raw = self._id_raw if bundle_raw == ZEROS32 else bundle_raw
-            interim_result = self.loader.graphql('''
-                query {
-                    transaction(id: "'''+b64enc(id_raw)+'''") {
-                        block { id }
-                    }
-                }''')
-            result = interim_result['data']['transaction']
-            if result is None:
-                ar.logger.info(f'Waiting for {b64enc(id_raw)} to propagate ...')
-                time.sleep(60)
-                return self.block_raw
-            block = result['block']
-            if block is None:
-                ar.logger.info(f'Waiting for {b64enc(id_raw)} to be mined ...')
-                time.sleep(60)
-                return self.block_raw
-            else:
-                self._block_raw = b64dec(block['id'])
-        return self._block_raw
+        while True:
+            with self.lock:
+                if self._block_raw is not None:
+                    return self._block_raw
+                id_raw = self._id_raw if bundle_raw == ZEROS32 else bundle_raw
+                interim_result = self.loader.graphql('''
+                    query {
+                        transaction(id: "'''+b64enc(id_raw)+'''") {
+                            block { id }
+                        }
+                    }''')
+                result = interim_result['data']['transaction']
+                if result is None:
+                    ar.logger.info(f'Waiting for {b64enc(id_raw)} to propagate ...')
+                else:
+                    block = result['block']
+                    if block is None:
+                        ar.logger.info(f'Waiting for {b64enc(id_raw)} to be mined ...')
+                    else:
+                        self._block_raw = b64dec(block['id'])
+                        return self._block_raw
+            #import pdb; pdb.set_trace()
+            time.sleep(60)
 
     def __enter__(self):
         self.get()
@@ -235,9 +276,10 @@ class BackedStructur:
         assert offset + self.item_size <= self.size
         assert len(value) == self.item_size
         shadow = self.get()
-        if shadow[offset : offset + self.item_size] != value:
-            shadow[offset : offset + self.item_size] = value
-            self.dirty = True
+        with self.lock:
+            if shadow[offset : offset + self.item_size] != value:
+                shadow[offset : offset + self.item_size] = value
+                self.dirty = True
 
     def __len__(self):
         return self.item_count
@@ -245,47 +287,55 @@ class BackedStructur:
     def __iter__(self):
         shadow = self.get()
         for offset in range(0, self.size, self.item_size):
-            yield bytes(shadow[offset : offset + self.item_size])
+            with self.lock:
+                data = bytes(shadow[offset : offset + self.item_size])
+            yield data
 
     def append(self, value):
         assert len(value) == self.item_size
-        self.item_count += 1
-        self.dirty = True
-        self.shadow += value
+        with self.lock:
+            self.item_count += 1
+            self.dirty = True
+            self.shadow += value
     
     def get(self):
         if self.shadow is None:
-            self.shadow = bytearray(self.loader.data(b64enc(self.id_raw), b64enc(self.bundle_raw), b64enc(self.block_raw)))
-            self.size = len(self.shadow)
+            ids = b64enc(self.id_raw), b64enc(self.bundle_raw), b64enc(self.block_raw)
+            with self.lock:
+                if self.shadow is None:
+                    self.shadow = bytearray(self.loader.data(*ids))
+                    self.size = len(self.shadow)
         return self.shadow
 
     def flush(self):
-        if self.dirty:
-            assert len(self.shadow) == self.size
-            tags = [*self.tags]
-            try:
-                change_tag(tags, 'Application', 'HashMap', condense_to_one=False)
-            except:
-                pass
-            try:
-                change_tag(tags, 'Name', self.name, condense_to_one=False)
-            except:
-                pass
-            change_tag(tags, 'Item-Size', str(self.item_size), condense_to_one=True)
-            change_tag(tags, 'Item-Count', str(self.item_count), condense_to_one=True)
-            if self._id_raw is not None:
-                change_tag(tags, 'Previous-Revision', b64enc(self._id_raw), condense_to_one=True)
-            if self._block_raw is not None:
-                change_tag(tags, 'Previous-Revision-Block', b64enc(self._block_raw), condense_to_one=True)
-            if self._bundle_raw is not None:
-                change_tag(tags, 'Previous-Revision-Bundle', b64enc(self._bundle_raw), condense_to_one=True)
-            assert len(self.shadow) == self.size
-            id = self.loader.send(self.shadow, tags=tags)
-            ar.logger.info(f'sent {id} with tags {tags}.')
-            self._id_raw = b64dec(id)
-            self._bundle_raw = None
-            self._block_raw = None
-            self.dirty = False
+        with self.lock:
+            if self.dirty:
+                assert len(self.shadow) == self.size
+                tags = [*self.tags]
+                try:
+                    change_tag(tags, 'Application', 'HashMap', condense_to_one=False)
+                except:
+                    pass
+                try:
+                    change_tag(tags, 'Name', self.name, condense_to_one=False)
+                except:
+                    pass
+                change_tag(tags, 'Item-Size', str(self.item_size), condense_to_one=True)
+                change_tag(tags, 'Item-Count', str(self.item_count), condense_to_one=True)
+                self.get_mined(peek=True) # fills block_raw if available
+                if self._id_raw is not None:
+                    change_tag(tags, 'Previous-Revision', b64enc(self._id_raw), condense_to_one=True)
+                if self._block_raw is not None:
+                    change_tag(tags, 'Previous-Revision-Block', b64enc(self._block_raw), condense_to_one=True)
+                if self._bundle_raw is not None:
+                    change_tag(tags, 'Previous-Revision-Bundle', b64enc(self._bundle_raw), condense_to_one=True)
+                assert len(self.shadow) == self.size
+                id = self.loader.send(self.shadow, tags=tags)
+                ar.logger.info(f'sent {id} with tags {tags}.')
+                self._id_raw = b64dec(id)
+                self._bundle_raw = None
+                self._block_raw = None
+                self.dirty = False
 
 class WorkerPool:
     def __init__(self, action, max_jobs, retries = 4):
@@ -293,31 +343,42 @@ class WorkerPool:
         self.max_jobs = max_jobs
         self.retries = retries
         self.job_semaphore = threading.BoundedSemaphore(max_jobs)
-    def single_job(self, data, idx, exceptions):
+    def single_job(self, input, output, idx, exceptions):
         tries = self.retries
         exc = None
         while tries > 0:
             try:
-                data[idx] = self.action(data[idx])
+                ar.logger.debug(f'starting {self.action}-{idx}')
+                output[idx] = self.action(input[idx])
+                ar.logger.debug(f'completing {self.action}-{idx}')
                 exc = None
                 break
             except Exception as e:
+                ar.logger.warning(f'job {self.action}-{idx} threw exception {type(e)} {e}')
                 tries -= 1
                 exc = e if exc is None else exc
         if exc is not None:
             exceptions.append((idx, exc))
         self.job_semaphore.release()
     def process(self, data):
-        data = [*data]
+        output = ['job not complete'] * len(data)
         exceptions = []
         for idx in range(len(data)):
+            if len(exceptions):
+                ar.logger.warning(f'detected job exception')
+                raise exceptions[0][1]
+            ar.logger.debug(f'queueing {self.action}-{idx}')
             self.job_semaphore.acquire() # blocks at max_jobs
-            threading.Thread(target=self.single_job, args=(data, idx, exceptions)).start()
-        for done in range(self.max_jobs): # wait for all to complete
+            threading.Thread(target=self.single_job, args=(data, output, idx, exceptions)).start()
+        for done in range(self.max_jobs): # wait for all to complete. this should indeed be max_jobs to exhaust all the semaphores.
+            if len(exceptions):
+                ar.logger.warning(f'detected job exception')
+                raise exceptions[0][1]
             self.job_semaphore.acquire()
         if len(exceptions):
-            raise exceptions[0][1]
-        return data
+                ar.logger.warning(f'detected job exception')
+                raise exceptions[0][1]
+        return output
 
 class TableDoc:
     EMPTY = 0
@@ -347,13 +408,15 @@ class TableDoc:
             else:
                 self.depth = parent.depth + 1
             self.total_height = parent.total_height
+        self.lock = threading.Lock()
         self.obj_list = [
             (entry_raw[0], entry_raw[1:113])
             for entry_raw in self.remote_data
         ]
         self.count = sum((type != self.EMPTY for type, entry in self.obj_list))
 
-    def get_filling_if_needed(self, hash_digit):
+    def _get_filling_if_needed(self, hash_digit):
+        #with self.lock:
         entry = self.obj_list[hash_digit]
         entry_type, entry = entry
         if isinstance(entry, (bytes, bytearray)):
@@ -395,78 +458,83 @@ class TableDoc:
     #    return self.add(hash_digits, block_raw, txid_raw, dataitem_raw, replace = True)
 
     def add(self, hash_digits, block_raw, txid_raw, dataitem_raw):#, replace = False):
+        block_raw = b64dec_if_not_bytes(block_raw)
+        txid_raw = b64dec_if_not_bytes(txid_raw)
+        dataitem_raw = b64dec_if_not_bytes(dataitem_raw)
         hash_digit = hash_digits[self.depth]
-        entry_type, entry = self.get_filling_if_needed(hash_digit)
-        if entry_type == self.MANY:
-            # it's already a table
-            # get 1 item from it, and compare the digits.
-            example_digits, *example_ids = next(iter(entry))
-            if example_digits == hash_digits:
-                # if they are same, add this one.
-                entry_type = self.TABLE
-                # since evaluation continues, the new entry will be added below
-                #entry.add(hash_digits, block_raw, txid_raw, dataitem_raw)
-            else:
-                # if they differ, add a table.
-                subtable = TableDoc(
-                    name = f'{self.remote_data.name}-{hash_digit}',
+        with self.lock:
+            entry_type, entry = self._get_filling_if_needed(hash_digit)
+            if entry_type == self.MANY:
+                # it's already a table
+                # get 1 item from it, and compare the digits.
+                example_digits, *example_ids = next(iter(entry))
+                if example_digits == hash_digits:
+                    # if they are same, add this one.
+                    entry_type = self.TABLE
+                    # since evaluation continues, the new entry will be added below
+                    #entry.add(hash_digits, block_raw, txid_raw, dataitem_raw)
+                else:
+                    # if they differ, add a table.
+                    subtable = TableDoc(
+                        name = f'{self.remote_data.name}-{hash_digit}',
+                        loader = self.remote_data.loader,
+                        txcontent_to_digits = self.txcontent_to_digits,
+                        size = self.remote_data.size,
+                        item_count = self.remote_data.item_count,
+                        parent = self,
+                        type = self.TABLE,
+                        outer_idx = hash_digit,
+                    )
+                    example_digit = example_digits[subtable.depth]
+                    subtable.obj_list[example_digit] = (entry_type, entry) # replaced entry
+                    # since evaluation continues, the new entry will be added below
+                    #subtable.add(hash_digits, block_raw, txid_raw, dataitem_raw) # new entry
+                    entry = subtable
+                    entry_type = self.TABLE
+            if entry_type == self.EMPTY:
+                entry_type, entry = (self.DATA, (hash_digits, (block_raw, txid_raw, dataitem_raw)))
+                self.count += 1
+            elif entry_type == self.TABLE:
+                entry.add(hash_digits, block_raw, txid_raw, dataitem_raw)
+            elif entry_type == self.DATA:
+                entry_digits, entry_ids = entry
+                if entry_digits == hash_digits:
+                    #try:
+                    assert entry_ids != (block_raw, txid_raw, dataitem_raw)
+                    #except:
+                    #    import pdb; pdb.set_trace()
+                    #    'here is breakpoint'
+                    entry_type = self.MANY
+                    parent = None
+                    txcontent_to_digits = self.txids_to_digits
+                    hash_digits = txcontent_to_digits(dataitem_raw=dataitem_raw, txid_raw=txid_raw, block_raw=block_raw)
+                    entry_digits = txcontent_to_digits(block_raw=entry_ids[0], txid_raw=entry_ids[1], dataitem_raw=entry_ids[2])
+                    name = b64enc(self.digits_to_hash_raw(hash_digits))
+                else:
+                    entry_type = self.TABLE
+                    parent = self
+                    txcontent_to_digits = self.txcontent_to_digits
+                    name = f'{self.remote_data.name}-{hash_digit}'
+                entry = TableDoc(
                     loader = self.remote_data.loader,
-                    txcontent_to_digits = self.txcontent_to_digits,
+                    txcontent_to_digits = txcontent_to_digits,
                     size = self.remote_data.size,
                     item_count = self.remote_data.item_count,
-                    parent = self,
-                    type = self.TABLE,
+                    parent = parent,
+                    type = entry_type,
                     outer_idx = hash_digit,
+                    name = name
                 )
-                example_digit = example_digits[subtable.depth]
-                subtable.obj_list[example_digit] = (entry_type, entry) # replaced entry
-                # since evaluation continues, the new entry will be added below
-                #subtable.add(hash_digits, block_raw, txid_raw, dataitem_raw) # new entry
-                entry = subtable
-                entry_type = self.TABLE
-        if entry_type == self.EMPTY:
-            entry_type, entry = (self.DATA, (hash_digits, (block_raw, txid_raw, dataitem_raw)))
-            self.count += 1
-        elif entry_type == self.TABLE:
-            entry.add(hash_digits, block_raw, txid_raw, dataitem_raw)
-        elif entry_type == self.DATA:
-            entry_digits, entry_ids = entry
-            if entry_digits == hash_digits:
-                try:
-                    assert entry_ids != (block_raw, txid_raw, dataitem_raw)
-                except:
-                    import pdb; pdb.set_trace()
-                    'here is breakpoint'
-                entry_type = self.MANY
-                parent = None
-                txcontent_to_digits = self.txids_to_digits
-                hash_digits = txcontent_to_digits(dataitem_raw=dataitem_raw, txid_raw=txid_raw, block_raw=block_raw)
-                entry_digits = txcontent_to_digits(block_raw=entry_ids[0], txid_raw=entry_ids[1], dataitem_raw=entry_ids[2])
-                name = b64enc(self.digits_to_hash_raw(hash_digits))
+                entry.add(entry_digits, *entry_ids) # add back replaced entry
+                entry.add(hash_digits, block_raw, txid_raw, dataitem_raw) # new entry
             else:
-                entry_type = self.TABLE
-                parent = self
-                txcontent_to_digits = self.txcontent_to_digits
-                name = f'{self.remote_data.name}-{hash_digit}'
-            entry = TableDoc(
-                loader = self.remote_data.loader,
-                txcontent_to_digits = txcontent_to_digits,
-                size = self.remote_data.size,
-                item_count = self.remote_data.item_count,
-                parent = parent,
-                type = entry_type,
-                outer_idx = hash_digit,
-                name = name
-            )
-            entry.add(entry_digits, *entry_ids) # add back replaced entry
-            entry.add(hash_digits, block_raw, txid_raw, dataitem_raw) # new entry
-        else:
-            raise StructureException('unhandled table entry type', entry_type)
-        self.obj_list[hash_digit] = (entry_type, entry)
+                raise StructureException('unhandled table entry type', entry_type)
+            self.obj_list[hash_digit] = (entry_type, entry)
 
     def get(self, hash_digits):
         hash_digit = hash_digits[self.depth]
-        entry_type, entry = self.get_filling_if_needed(hash_digit)
+        with self.lock:
+            entry_type, entry = self._get_filling_if_needed(hash_digit)
         if entry_type == self.EMPTY:
             return []
         elif entry_type == self.TABLE:
@@ -479,44 +547,90 @@ class TableDoc:
             raise StructureException('unhandled table entry type', entry_type)
 
     def needs_flush(self):
-        if self.remote_data.dirty:
-            return True
-        for entry_type, entry in self.obj_list:
-            if (isinstance(entry, self.__class__) or isinstance(self, entry.__class__)) and entry.needs_flush():
+        with self.lock:
+            if self.remote_data.dirty:
                 return True
-        return False
+            for entry_type, entry in self.obj_list:
+                if (isinstance(entry, self.__class__) or isinstance(self, entry.__class__)) and entry.needs_flush():
+                    return True
+            return False
 
-    def get_flush_leaves(self):
+    def _get_flush_leaves(self, include_unmined = True):
+        # this could go much faster if dirty flags propagated upward.
         leaves = []
+        skip = False
+        #self_mined = self.mined
         for idx, (entry_type, entry) in enumerate(self.obj_list):
             if (isinstance(entry, self.__class__) or isinstance(self, entry.__class__)):
-                subleaves = entry.get_flush_leaves()
+                #if idx == 758 and self.remote_data.name == 'DataItems-785-134-537-807-714':
+                #    import pdb; pdb.set_trace()
+                #    '''this may be the parent branch that is wrongly returning itself with an unmined leaf when include_unmined is False'''
+                with entry.lock:
+                    subleaves = entry._get_flush_leaves(include_unmined = include_unmined)
                 if len(subleaves):
                     leaves.extend(subleaves)
                 else:
                     # this hack sets the dirty flag if the outer document needs to update its entry for the inner document
                     subid = entry.remote_data.id_raw
-                    if self.remote_data[idx][-len(subid):] != subid:
-                        self.remote_data.dirty = True
+                    if entry.remote_data.dirty or subid is None or self.remote_data[idx][-len(subid):] != subid:
+                        if include_unmined or entry.get_mined(peek=True):
+                            self.remote_data.dirty = True
+                        else:
+                            skip = True
+                    elif not include_unmined and not entry.get_mined(peek=True):
+                        skip = True
             elif entry_type == self.DATA and not isinstance(entry, (bytes, bytearray)):
                 self.remote_data[idx] = bytes([entry_type]) + b''.join(entry[1])
-        if not len(leaves) and self.remote_data.dirty:
+        ar.logger.debug(f'{self.remote_data.name}: skip={skip} dirty={self.remote_data.dirty} preleaves={[leaf.remote_data.name for leaf in leaves]}')
+        if not len(leaves) and self.remote_data.dirty and not skip:
             leaves.append(self)
+        if not include_unmined:
+            for leaf in leaves:
+                for idx, (entry_type, entry) in enumerate(leaf.obj_list):
+                    if (isinstance(entry, self.__class__) or isinstance(self, entry.__class__)):
+                        assert entry.remote_data.get_mined(peek=True)
         return leaves
 
+    def get_mined(self, peek):
+        if not self.remote_data.get_mined(peek):
+            return False
+        for idx, (entry_type, entry) in enumerate(self.obj_list):
+            if (isinstance(entry, self.__class__) or isinstance(self, entry.__class__)):
+                if not entry.get_mined(peek):
+                    return False
+        return True
+
+    def flush_leaves(self, skip_if_leaf = False, include_unmined = True):
+        ar.logger.info(f'Gathering flush leaves for {self.remote_data.name} ... if this is too slow, propagate dirty flags upward')
+        with self.lock:
+            flush_leaves = self._get_flush_leaves(include_unmined = include_unmined)
+            leaves=flush_leaves
+            if skip_if_leaf and len(flush_leaves) <= 1:
+                return 0
+        ar.logger.info(f'Flushing gathered leaves ...')
+        #if len(leaves) == 3 and [leaf.remote_data.name for leaf in leaves] == ['DataItems-16', 'DataItems-785', 'DataItems-868']: #'DataItems' not in leaves[0].remote_data.name and leaves[1].remote_data.name == 'DataItems-785' and include_unmined == False:
+        #    import pdb; pdb.set_trace()
+        #    '''DataItems-785 may contain DataItems-785-134-537-807-714 which may have an unmined MANY at 758.'''
+        WorkerPool(
+            action = lambda leaf: leaf.flush(top_down = True),
+            max_jobs = 32,
+            retries = 1
+        ).process(flush_leaves)
+        #[leaf.flush(top_down=True) for leaf in flush_leaves]
+        return len(flush_leaves)
+
     def flush(self, top_down=False):
+        #import pdb; pdb.set_trace()
         if not top_down:
-            flush_leaves = self.get_flush_leaves()
-            while len(flush_leaves):
-                for leaf in flush_leaves:
-                    leaf.flush(top_down = True)
-                flush_leaves = self.get_flush_leaves()
+            while self.flush_leaves():
+                pass
         else:
+            #import pdb; pdb.set_trace()
             if self.remote_data._id_raw is None:
-                print(f'TableDoc.flush(): flushing new tabledoc with depth {self.depth}')
+                ar.logger.info(f'TableDoc.flush(): flushing new tabledoc with depth {self.depth}')
             else:
-                print(f'TableDoc.flush(): flushing tabledoc {b64enc(self.remote_data._id_raw)} with depth {self.depth}')
-            with self.remote_data:
+                ar.logger.info(f'TableDoc.flush(): flushing tabledoc {b64enc(self.remote_data._id_raw)} with depth {self.depth}')
+            with self.lock, self.remote_data:
                 for idx, (entry_type, entry) in enumerate(self.obj_list):
                     if isinstance(entry, (bytes, bytearray)):
                         continue
@@ -555,27 +669,28 @@ class TableDoc:
 
     def __iter__(self):
         
-        for idx, (entry_type, entry) in enumerate(self.obj_list):
-            if entry_type == self.DATA:
-                digits, (block_raw, txid_raw, dataitem_raw) = self.get_filling_if_needed(idx)[1]
-                assert digits[self.depth] == idx
-                # this is already how the digits are generated
-                #assert digits == self.txcontent_to_digits(block_raw=block_raw, txid_raw=txid_raw, dataitem_raw=dataitem_raw)
-                yield digits, (block_raw, txid_raw, dataitem_raw)
-        for idx, (entry_type, entry) in enumerate(self.obj_list):
-            if entry_type is self.TABLE:
-                yield from self.get_filling_if_needed(idx)[1]
-            elif entry_type is self.MANY:
-                digits = None
-                count = 0
-                for _, (block_raw, txid_raw, dataitem_raw) in self.get_filling_if_needed(idx)[1]:
-                    if digits is None:
-                        digits = self.txcontent_to_digits(dataitem_raw=dataitem_raw, txid_raw=txid_raw, block_raw=block_raw)
-                    count += 1
+        with self.lock:
+            for idx, (entry_type, entry) in enumerate(self.obj_list):
+                if entry_type == self.DATA:
+                    digits, (block_raw, txid_raw, dataitem_raw) = self._get_filling_if_needed(idx)[1]
+                    assert digits[self.depth] == idx
+                    # this is already how the digits are generated
+                    #assert digits == self.txcontent_to_digits(block_raw=block_raw, txid_raw=txid_raw, dataitem_raw=dataitem_raw)
                     yield digits, (block_raw, txid_raw, dataitem_raw)
-                assert count > 1
-            #if entry_type in (self.TABLE, self.MANY):
-            #    yield from self.get_filling_if_needed(idx)[1]
+            for idx, (entry_type, entry) in enumerate(self.obj_list):
+                if entry_type is self.TABLE:
+                    yield from self._get_filling_if_needed(idx)[1]
+                elif entry_type is self.MANY:
+                    digits = None
+                    count = 0
+                    for _, (block_raw, txid_raw, dataitem_raw) in self._get_filling_if_needed(idx)[1]:
+                        if digits is None:
+                            digits = self.txcontent_to_digits(dataitem_raw=dataitem_raw, txid_raw=txid_raw, block_raw=block_raw)
+                        count += 1
+                        yield digits, (block_raw, txid_raw, dataitem_raw)
+                    assert count > 1
+                #if entry_type in (self.TABLE, self.MANY):
+                #    yield from self._get_filling_if_needed(idx)[1]
 
     def __enter__(self):
         return self
@@ -607,7 +722,7 @@ class TableDoc:
 
 from ar import ANS104BundleHeader
 class BundleIndexer:
-    def __init__(self, loader, filename, id = None, bundle = None, block = None, start_block = 761917, size = 100000):
+    def __init__(self, loader, filename, id = None, bundle = None, block = None, start_block = 761000, size = 100000): # 761917
         self.debug_blocks = set()
         self.debug_bundles = set()
         self.filename = filename
@@ -637,6 +752,12 @@ class BundleIndexer:
             #tags = [tag for tag in tags if tag['name'] not in (b'Block-Min', b'Block-Max')]
             if not get_tags(tags, b'Block-Min'):
                 ensure_tag(tags, b'Block-Min', str(start_block))
+            missing_data_block = get_tags(tags, 'Missing-Data-Block')
+            missing_data_bundle = get_tags(tags, 'Missing-Data-Bundle')
+            missing_data_id = get_tags(tags, 'Missing-Data-DataItem')
+            missing_data_block = missing_data_block[-1] if missing_data_block else None
+            missing_data_bundle = missing_data_bundle[-1] if missing_data_bundle else None
+            missing_data_id = missing_data_id[-1] if missing_data_id else None
         else:
             id_raw = None
             tags = [
@@ -645,7 +766,11 @@ class BundleIndexer:
             ]
             self.prev_block = start_block
             self.next_block = start_block
+            missing_data_block = None
+            missing_data_bundle = None
+            missing_data_id = None
         self.root = TableDoc(loader, self.txcontent_to_digits, size=size, id_raw = id_raw, tags = tags, name = 'DataItems')
+        self.missing_data = TableDoc(loader, TableDoc.txids_to_digits, size=size, dataitem_raw = missing_data_id, block_raw = missing_data_block, id_raw = missing_data_bundle, name = 'DataItems-Missing-Data', type = TableDoc.MANY)
         self.lock = threading.Lock()
     def get_all(self, dataitem_id):
         return [
@@ -663,6 +788,12 @@ class BundleIndexer:
         if len(results) < 1:
             raise KeyError(f'{dataitem_id} not found from block {self.prev_block+1} through {self.next_block-1}')
         return results[0]
+    def __iter__(self):
+        yield from (dict(
+            block = b64enc(block_raw),
+            bundle = b64enc(bundle_raw),
+            dataitem = b64enc(dataitem_raw)
+        ) for digits, (block_raw, bundle_raw, dataitem_raw) in self.root)
     def __getitem__(self, dataitem_id):
         results = self.get_all(dataitem_id)
         if len(results) == 0:
@@ -676,6 +807,7 @@ class BundleIndexer:
         return self.root.hash_to_digits(dataitem_raw)
     def _insert_block(self, height):
         loader = self.root.remote_data.loader
+        ar.logger.info(f'Retrieving block {height}')
         try:
             block_bytes = loader.block2_height(height, b'\xff'*125)
         except ar.ArweaveNetworkException:
@@ -683,35 +815,54 @@ class BundleIndexer:
             ar.logger.warning('Peer does not support HTTP GET body data. Try a different peer for faster block processing.')
         block = ar.Block.frombytes(block_bytes)
         ar.logger.info(f'Reading block {height}: {block.indep_hash}')
+        #if block.indep_hash in self.debug_blocks:
+        #    import pdb; pdb.set_trace()
         assert block.indep_hash not in self.debug_blocks
         self.debug_blocks.add(block.indep_hash)
 
         # fetch missing tx tags
+        ar.logger.info(f'{block.indep_hash}: fetching txs_tags')
         txs_tags = WorkerPool(
             action = lambda tx: tx.tags if type(tx) is ar.Transaction else loader.tags(tx),
             max_jobs = loader.gateway.max_outgoing_connections,
         ).process(block.txs)
 
-        for tx_tags, tx in zip(txs_tags, block.txs):
+        for idx, (tx_tags, tx) in enumerate(zip(txs_tags, block.txs)):
+            if type(tx_tags) is str:
+                import pdb; pdb.set_trace()
             if not get_tags(tx_tags, b'Bundle-Format'):
                 continue
+            ar.logger.info(f'Parsing bundle {tx}')
             assert tx not in self.debug_bundles
             self.debug_bundles.add(tx)
             try:
                 header = ANS104BundleHeader.from_tags_stream(tx_tags, loader.stream(tx))
-            except ar.ArweaveNetworkException:
-                with self.lock:
-                    ensure_tag(self.root.remote_data.tags, b'Block-Missing-Data', block.indep_hash)
-                continue
+            except ar.ArweaveNetworkException as exc:
+                if len(exc.args) > 2 and exc.args[1] == 404:
+                    with self.lock:
+                        ar.logger.warning(f'failed to find {tx}, flushing missing tx information')
+                        tx_raw = b64dec(tx)
+                        self.missing_data.add(self.missing_data.hash_to_digits(tx), b64dec(block.indep_hash), tx_raw, tx_raw)
+                        self.missing_data.flush_leaves(include_unmined = False)
+                    
+                    continue
+                else:
+                    raise
+            ar.logger.info(f'Adding items from bundle {tx}')
             for bundled_id in header.length_by_id.keys():
-                with self.lock:
-                    self.root[bundled_id] = (block.indep_hash, tx, bundled_id)
+                self.root[bundled_id] = (block.indep_hash, tx, bundled_id)
+            ar.logger.info(f'Flushing leaves for {tx}')
+            self.root.flush_leaves(skip_if_leaf = True, include_unmined = False)
+        ar.logger.info(f'Processed block {height}: {block.indep_hash}')
 
     def add_forward(self, count=1, at_once=3):
         WorkerPool(
             action = self._insert_block,
             max_jobs = at_once,
+            retries = 1
         ).process(range(self.next_block, self.next_block + count))
+        #[self._insert_block(x) for x in range(self.next_block, self.next_block + count)]
+        ar.logger.info(f'Processed {count} blocks forward.')
         if self.prev_block == self.next_block:
             self.prev_block -= 1
         self.next_block += count
@@ -722,6 +873,7 @@ class BundleIndexer:
             action = self._insert_block,
             max_jobs = at_once
         ).process(range(max(0,self.prev_block - count + 1), self.prev_block + 1, -1))
+        ar.logger.info(f'Processed {count} blocks backward.')
         if self.next_block == self.prev_block:
             self.next_block += 1
         self.prev_block -= count
@@ -730,6 +882,14 @@ class BundleIndexer:
         change_tag(self.root.remote_data.tags, 'Block-Min', str(self.prev_block + 1), condense_to_one=True)
 
     def save(self):
+        ar.logger.info(f'Saving ...')
+        self.missing_data.flush_leaves(include_unmined = False)
+        self.root.flush_leaves(skip_if_leaf = True, include_unmined = False)
+        if self.missing_data.ids is not None:
+            missing_data_block, missing_data_txid, missing_data_dataitem_id = self.missing_data.ids
+            ensure_tag(self.root.remote_data.tags, b'Missing-Data-Block', missing_data_block)
+            ensure_tag(self.root.remote_data.tags, b'Missing-Data-Bundle', missing_data_txid)
+            ensure_tag(self.root.remote_data.tags, b'Missing-Data-DataItem', missing_data_dataitem_id)
         id, bundle, block = self.root.ids
         with open(self.filename + '.new', 'wt') as file:
             json.dump({
@@ -762,15 +922,17 @@ def makedefault():
     }
     wallet = Wallet.from_data(wallet)
     node = Node()
-    peer = Peer(#ar.multipeer.MultiPeer()
-            Peer('https://arweave.net').health()['origins'][0]['endpoint'],
-            outgoing_connections = 10
-    )#ar.multipeer.MultiPeer()
-    #peer = ar.multipeer.MultiPeer(timeout=60*60)
-    #peer = Peer('http://gateway-3.arweave.net:1984')
-    gateway = Peer('https://arweave.net', outgoing_connections = 512)
-    #peer = gateway
-    loader = Loader(node, gateway, peer, wallet)#, prefer_peer=True)
+    gateway_peer_ct = len(Peer('https://arweave.net').health()['origins'])
+    querying_gateway = Peer('https://arweave.net', outgoing_connections = 600, requests_per_period = 600, period_sec = 60*5)
+    #if not "gateway":
+    if "gateway":
+        real_peer = Peer(Peer('https://arweave.net').health()['origins'][0]['endpoint'])
+        load_balancing_peer = Peer('https://arweave.net', requests_per_period = 900 * gateway_peer_ct)
+        loader = Loader(node, querying_gateway, load_balancing_peer, wallet, prefer_peer=True, binary_peer = real_peer)
+    else:
+        peer = ar.multipeer.MultiPeer(timeout=60*60)
+        loader = Loader(node, querying_gateway, peer, wallet, prefer_peer=True)
+
     indexer = BundleIndexer(loader, 'arweave-index.json')
     return indexer
 
@@ -780,7 +942,7 @@ if __name__ == '__main__':
     #for item in indexer.root:
     #    print(item)
     then = time.time()
-    chunksize = 100
+    chunksize = 500
     if (indexer.next_block - 1) % chunksize != 0:
         indexer.add_forward(chunksize - ((indexer.next_block - 1) % chunksize))
         indexer.save()
@@ -788,13 +950,14 @@ if __name__ == '__main__':
         indexer.add_backward(((indexer.prev_block + 1) % chunksize))
         indexer.save()
     while True:
-        WorkerPool(
-            action = lambda function: function(chunksize, 5),
-            max_jobs = 2
-        ).process((indexer.add_forward,))#, indexer.add_backward))
+        #WorkerPool(
+        #    action = lambda function: function(chunksize, 5),
+        #    max_jobs = 2
+        #).process((indexer.add_forward,))#, indexer.add_backward))
+        indexer.add_forward(chunksize, 5)
         now = time.time()
         #if True:
-        if now - then > 60*60:#*5:
+        if now - then > 60*60*5:
             then = now
             indexer.save()
             print(indexer.root.ids)

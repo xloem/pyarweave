@@ -4,8 +4,8 @@ DEFAULT_API_URL = 'https://node2.bundlr.network'
 DEFAULT_CHAIN = 'arweave'
 
 class Node(HTTPClient):
-    def __init__(self, api_url = DEFAULT_API_URL, timeout = None, retries = 5):
-        super().__init__(api_url, timeout, retries)
+    def __init__(self, api_url = DEFAULT_API_URL, timeout = None, retries = 5, outgoing_connections = 100, requests_per_period = 10000, period_sec = 60):
+        super().__init__(api_url, timeout, retries, outgoing_connections = outgoing_connections, requests_per_period = requests_per_period, period_sec = period_sec)
 
     def account_withdrawals_address(self, address, currency = DEFAULT_CHAIN):
         '''Gets the nonce used for withdrawal request validation from the bundler'''

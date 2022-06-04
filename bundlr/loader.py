@@ -4,14 +4,29 @@ from ar.utils import create_tag, normalize_tag, get_tags
 import threading
 
 class Loader:
-    def __init__(self, node, gateway, peer, wallet):
+    def __init__(self, node, gateway, peer, wallet, prefer_peer = False, binary_peer = None):
         self.node = node
         self.gateway = gateway
         self.peer = peer
+        self.binary_peer = peer if binary_peer is None else binary_peer
         self.wallet = wallet
+        self.preferred = peer if prefer_peer else gateway
+
+        self.graphql = self.gateway.graphql
+        self.arql = self.gateway.arql
+        self.health = self.gateway.health
+
+    def ratelimit_suggested(self, func='graphql'):
+        return self.gateway.ratelimit_suggested
 
     def __getattr__(self, attr):
-        return getattr(self.peer if '2' in attr or 'sync_' in attr else self.gateway, attr)
+        if '2' in attr:
+            peer = self.binary_peer
+        elif '_sync_' in attr:
+            peer = self.peer
+        else:
+            peer = self.preferred
+        return getattr(peer, attr)
 
     def send(self, data, tags):
         di = DataItem(data = data)
@@ -79,6 +94,4 @@ class Loader:
             #tags = Transaction.frombytes(self.tx2(txid)).tags
         logger.warning(f'{txid} was not verified') # check the hash tree
         return tags
-
-
 
