@@ -142,7 +142,7 @@ class HTTPClient:
             self._ratelimit_epilogue(True)
             return response
         except requests.exceptions.RequestException as exc:
-            logger.error(exc, response.text)
+            logger.error(exc, response if response is None else response.text)
             if response is not None and response.status_code == 429:
                 # too many requests
                 self._ratelimit_epilogue(False)

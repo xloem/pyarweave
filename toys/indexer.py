@@ -136,6 +136,8 @@ class BackedStructur:
         self._id_raw = id_raw
         self._bundle_raw = bundle_raw
         self._block_raw = block_raw
+        if block_raw is not None:
+            assert len(block_raw) == 48
         self.bytes = bytes
         self.loader = loader
         self.tags = tags
@@ -151,7 +153,7 @@ class BackedStructur:
 
     @property
     def ids(self):
-        return b64enc(self.id_raw), b64enc(self.bundle_raw), b64enc(self.block_raw)
+        return b64enc(self.block_raw), b64enc(self.bundle_raw), b64enc(self.id_raw)
 
     @property
     def ids_raw(self):
@@ -755,9 +757,11 @@ class BundleIndexer:
             missing_data_block = get_tags(tags, 'Missing-Data-Block')
             missing_data_bundle = get_tags(tags, 'Missing-Data-Bundle')
             missing_data_id = get_tags(tags, 'Missing-Data-DataItem')
-            missing_data_block = missing_data_block[-1] if missing_data_block else None
-            missing_data_bundle = missing_data_bundle[-1] if missing_data_bundle else None
-            missing_data_id = missing_data_id[-1] if missing_data_id else None
+            missing_data_block = b64dec(missing_data_block[-1]) if missing_data_block else None
+            missing_data_bundle = b64dec(missing_data_bundle[-1]) if missing_data_bundle else None
+            missing_data_id =  b64dec(missing_data_id[-1]) if missing_data_id else None
+            if len(missing_data_id) > len(missing_data_block):
+                missing_data_id, missing_data_block = missing_data_block, missing_data_id
         else:
             id_raw = None
             tags = [
