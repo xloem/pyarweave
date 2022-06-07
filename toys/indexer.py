@@ -181,11 +181,13 @@ class BackedStructur:
                         }
                     }''')['data']['transaction']
                 if result is None:
+                    #import pdb; pdb.set_trace()
                     ar.logger.info(f'Waiting for {b64enc(self._id_raw)} to propagate ...')
                 else:
                     bundledIn = result['bundledIn']
                     block = result['block']
                     if bundledIn is None and block is None:
+                        #import pdb; pdb.set_trace()
                         ar.logger.info(f'Waiting for {b64enc(self._id_raw)} to be mined ...')
                     else:
                         if bundledIn is None:
@@ -252,10 +254,12 @@ class BackedStructur:
                     }''')
                 result = interim_result['data']['transaction']
                 if result is None:
+                    #import pdb; pdb.set_trace()
                     ar.logger.info(f'Waiting for {b64enc(id_raw)} to propagate ...')
                 else:
                     block = result['block']
                     if block is None:
+                        #import pdb; pdb.set_trace()
                         ar.logger.info(f'Waiting for {b64enc(id_raw)} to be mined ...')
                     else:
                         self._block_raw = b64dec(block['id'])
@@ -332,8 +336,14 @@ class BackedStructur:
                 if self._bundle_raw is not None:
                     change_tag(tags, 'Previous-Revision-Bundle', b64enc(self._bundle_raw), condense_to_one=True)
                 assert len(self.shadow) == self.size
-                id = self.loader.send(self.shadow, tags=tags)
-                ar.logger.info(f'sent {id} with tags {tags}.')
+                #if 'lock' not in globals():
+                #    globals()['lock'] = threading.Lock()
+                #with globals()['lock']: #dbg
+                #    import pdb; pdb.set_trace()
+                id, *extra = self.loader.send(self.shadow, tags=tags)
+                if self._id_raw and self._block_raw and self._bundle_raw:
+                    #import pdb ; pdb.set_trace()
+                    ar.logger.info(f'sent {id} with tags {tags} {extra[:1]}.')
                 self._id_raw = b64dec(id)
                 self._bundle_raw = None
                 self._block_raw = None
@@ -417,6 +427,10 @@ class TableDoc:
         ]
         self.count = sum((type != self.EMPTY for type, entry in self.obj_list))
 
+    def _set_obj_list(self, idx, value):
+        self.obj_list[idx] = value
+        self.remote_data.dirty = True
+
     def _get_filling_if_needed(self, hash_digit):
         #with self.lock:
         entry = self.obj_list[hash_digit]
@@ -453,7 +467,7 @@ class TableDoc:
                 entry = (digits, (block_raw, txid_raw, dataitem_raw))
             else:
                 raise StructureException('unhandled table entry type', entry_type)
-            self.obj_list[hash_digit] = (entry_type, entry)
+            self._set_obj_list(hash_digit, (entry_type, entry))
         return entry_type, entry
 
     #def set(self, hash_digits, block_raw, txid_raw, dataitem_raw):
@@ -488,7 +502,7 @@ class TableDoc:
                         outer_idx = hash_digit,
                     )
                     example_digit = example_digits[subtable.depth]
-                    subtable.obj_list[example_digit] = (entry_type, entry) # replaced entry
+                    subtable._set_obj_list(example_digit, (entry_type, entry)) # replaced entry
                     # since evaluation continues, the new entry will be added below
                     #subtable.add(hash_digits, block_raw, txid_raw, dataitem_raw) # new entry
                     entry = subtable
@@ -531,7 +545,7 @@ class TableDoc:
                 entry.add(hash_digits, block_raw, txid_raw, dataitem_raw) # new entry
             else:
                 raise StructureException('unhandled table entry type', entry_type)
-            self.obj_list[hash_digit] = (entry_type, entry)
+            self._set_obj_list(hash_digit, (entry_type, entry))
 
     def get(self, hash_digits):
         hash_digit = hash_digits[self.depth]
@@ -559,6 +573,8 @@ class TableDoc:
 
     def _get_flush_leaves(self, include_unmined = True):
         # this could go much faster if dirty flags propagated upward.
+        #if self.remote_data.name == 'DataItems-636':
+        #    import pdb; pdb.set_trace()
         leaves = []
         skip = False
         #self_mined = self.mined
@@ -603,7 +619,14 @@ class TableDoc:
         return True
 
     def flush_leaves(self, skip_if_leaf = False, include_unmined = True):
+        # it looks like things could be simplified some if _get_flush_leaves were merged with flush_leaves. and leaves flushed when encountered.
+        # this would reduce race situations where leaves are mutated before flushed.
+
+
         ar.logger.info(f'Gathering flush leaves for {self.remote_data.name} ... if this is too slow, propagate dirty flags upward')
+        # unmined leaves can get updated before they are flushed if asked not to be included
+        # so it would make sense to start flushing them when they are found, with a simpler arrangement of functions
+        # but it's reasonable to discard them in flush(), since this happens frequently
         with self.lock:
             flush_leaves = self._get_flush_leaves(include_unmined = include_unmined)
             leaves=flush_leaves
@@ -614,35 +637,42 @@ class TableDoc:
         #    import pdb; pdb.set_trace()
         #    '''DataItems-785 may contain DataItems-785-134-537-807-714 which may have an unmined MANY at 758.'''
         WorkerPool(
-            action = lambda leaf: leaf.flush(top_down = True),
+            action = lambda leaf: leaf.flush(top_down = True, include_unmined = include_unmined),
             max_jobs = 32,
             retries = 1
         ).process(flush_leaves)
-        #[leaf.flush(top_down=True) for leaf in flush_leaves]
+        #[leaf.flush(top_down=True, include_unmined = include_unmined) for leaf in flush_leaves]
         return len(flush_leaves)
 
-    def flush(self, top_down=False):
+    def flush(self, top_down=False, include_unmined=True):
         #import pdb; pdb.set_trace()
         if not top_down:
             while self.flush_leaves():
                 pass
         else:
             #import pdb; pdb.set_trace()
-            if self.remote_data._id_raw is None:
-                ar.logger.info(f'TableDoc.flush(): flushing new tabledoc with depth {self.depth}')
-            else:
-                ar.logger.info(f'TableDoc.flush(): flushing tabledoc {b64enc(self.remote_data._id_raw)} with depth {self.depth}')
-            with self.lock, self.remote_data:
-                for idx, (entry_type, entry) in enumerate(self.obj_list):
-                    if isinstance(entry, (bytes, bytearray)):
-                        continue
-                    if entry_type == self.EMPTY:
-                        continue
-                    elif entry_type in (self.TABLE, self.MANY):
-                        entry = entry.raw_ids
-                    elif entry_type == self.DATA:
-                        entry = b''.join(entry[1])
-                    self.remote_data[idx] = bytes([entry_type]) + entry
+            if include_unmined:
+                #import pdb; pdb.set_trace()
+                if self.remote_data._id_raw is None:
+                    ar.logger.info(f'TableDoc.flush(): flushing new tabledoc with depth {self.depth}')
+                else:
+                    ar.logger.info(f'TableDoc.flush(): flushing tabledoc {b64enc(self.remote_data._id_raw)} with depth {self.depth}')
+            self.remote_data.get()
+            with self.remote_data: # old code flushes at close of context
+                with self.lock:
+                    for idx, (entry_type, entry) in enumerate(self.obj_list):
+                        if isinstance(entry, (bytes, bytearray)):
+                            continue
+                        if entry_type == self.EMPTY:
+                            continue
+                        elif entry_type in (self.TABLE, self.MANY):
+                            if not include_unmined and entry.remote_data.dirty or not entry.remote_data.get_mined(peek=True):
+                                continue
+                            entry = entry.raw_ids
+                        elif entry_type == self.DATA:
+                            entry = b''.join(entry[1])
+                        self.remote_data[idx] = bytes([entry_type]) + entry
+                # plausible race condition on this line between locks, seems non-impactful
 
     @property
     def ids(self):
@@ -728,6 +758,7 @@ class BundleIndexer:
         self.debug_blocks = set()
         self.debug_bundles = set()
         self.filename = filename
+        self.flush_lock = threading.Lock()
         if os.path.exists(filename):
             with open(filename) as file:
                 metadata = json.load(file)
@@ -809,7 +840,7 @@ class BundleIndexer:
     def txcontent_to_digits(self, dataitem_raw, txid_raw, block_raw):
         #self.remote_data.add()
         return self.root.hash_to_digits(dataitem_raw)
-    def _insert_block(self, height):
+    def _insert_block(self, height, flush_leaves=False):
         loader = self.root.remote_data.loader
         ar.logger.info(f'Retrieving block {height}')
         try:
@@ -855,13 +886,17 @@ class BundleIndexer:
             ar.logger.info(f'Adding items from bundle {tx}')
             for bundled_id in header.length_by_id.keys():
                 self.root[bundled_id] = (block.indep_hash, tx, bundled_id)
-            ar.logger.info(f'Flushing leaves for {tx}')
-            self.root.flush_leaves(skip_if_leaf = True, include_unmined = False)
+            if flush_leaves and self.flush_lock.acquire(blocking=False):
+                try:
+                    ar.logger.info(f'Flushing leaves for {tx}')
+                    self.root.flush_leaves(skip_if_leaf = True, include_unmined = False)
+                finally:
+                    self.flush_lock.release()
         ar.logger.info(f'Processed block {height}: {block.indep_hash}')
 
     def add_forward(self, count=1, at_once=3):
         WorkerPool(
-            action = self._insert_block,
+            action = lambda idx: self._insert_block(idx, flush_leaves = ((idx % at_once) == 0)),
             max_jobs = at_once,
             retries = 1
         ).process(range(self.next_block, self.next_block + count))
@@ -894,7 +929,7 @@ class BundleIndexer:
             ensure_tag(self.root.remote_data.tags, b'Missing-Data-Block', missing_data_block)
             ensure_tag(self.root.remote_data.tags, b'Missing-Data-Bundle', missing_data_txid)
             ensure_tag(self.root.remote_data.tags, b'Missing-Data-DataItem', missing_data_dataitem_id)
-        id, bundle, block = self.root.ids
+        block, bundle, id = self.root.ids
         with open(self.filename + '.new', 'wt') as file:
             json.dump({
                 'id': id,
@@ -948,20 +983,20 @@ if __name__ == '__main__':
     then = time.time()
     chunksize = 500
     if (indexer.next_block - 1) % chunksize != 0:
-        indexer.add_forward(chunksize - ((indexer.next_block - 1) % chunksize))
+        indexer.add_forward(chunksize - ((indexer.next_block - 1) % chunksize), 50)
         indexer.save()
     if (indexer.prev_block + 1) % chunksize != 0:
-        indexer.add_backward(((indexer.prev_block + 1) % chunksize))
+        indexer.add_backward(((indexer.prev_block + 1) % chunksize), 50)
         indexer.save()
     while True:
         #WorkerPool(
         #    action = lambda function: function(chunksize, 5),
         #    max_jobs = 2
         #).process((indexer.add_forward,))#, indexer.add_backward))
-        indexer.add_forward(chunksize, 5)
+        indexer.add_forward(chunksize, 50)
         now = time.time()
-        #if True:
-        if now - then > 60*60*5:
+        if True:
+        #if now - then > 60*60*2:
             then = now
             indexer.save()
             print(indexer.root.ids)

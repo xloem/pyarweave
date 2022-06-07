@@ -142,15 +142,26 @@ class HTTPClient:
             self._ratelimit_epilogue(True)
             return response
         except requests.exceptions.RequestException as exc:
-            logger.error(exc, response if response is None else response.text)
-            if response is not None and response.status_code == 429:
+            text = response if response is None else response.text
+            status_code = 0 if response is None else response.status_code
+            logger.error(exc, text)
+            if status_code == 429:
                 # too many requests
                 self._ratelimit_epilogue(False)
                 return self._get(*params, **request_kwparams)
-            self.on_network_exception(response.text, response.status_code, exc, response)
-            raise ArweaveNetworkException(response.text, response.status_code, exc, response)
+            elif status_code == 520:
+                # cloudfront broke
+                self._ratelimit_epilogue(True)
+                return self._get(*params, **request_kwparams)
+            elif status_code == 502:
+                # cloudflare broke
+                self._ratelimit_epilogue(True)
+                return self._get(*params, **request_kwparams)
+            self.on_network_exception(text, status_code, exc, response)
+            raise ArweaveNetworkException(text, status_code, exc, response)
         except Exception:
             self._ratelimit_epilogue(True)
+            raise
 
     def _post(self, data, *params, headers = {}, **request_kwparams):
 
@@ -199,10 +210,19 @@ class HTTPClient:
                     self._ratelimit_epilogue(False)
                     self.on_too_many_requests()
                     continue
+                elif status_code == 520:
+                    # cloudfront broke
+                    self._ratelimit_epilogue(True)
+                    return self._get(*params, **request_kwparams)
+                elif status_code == 502:
+                    # cloudflare broke
+                    self._ratelimit_epilogue(True)
+                    return self._get(*params, **request_kwparams)
                 self.on_network_exception(text, status_code, exc, response)
                 raise ArweaveNetworkException(text, status_code, exc, response)
             except Exception:
                 self._ratelimit_epilogue(True)
+                raise
 
     def on_network_exception(self, text, code, exception, response):
         raise ArweaveNetworkException(text, code, exception, response)
@@ -504,7 +524,7 @@ class Peer(HTTPClient):
         Returns the data chunk containing 1-based offset,
         using json, base64 encoded network transmission.
 
-        {packing} := { 'unpacked' | 'spora_2_5' | 'any' }
+        {packing} := { 'unpacked' | 'spora_2_5' | 'spora_2_6_<address>' | 'any' }
 
         {
             "tx_path",
@@ -528,7 +548,7 @@ class Peer(HTTPClient):
         Returns the data chunk containing 1-based offset,
         using a raw binary format for the fields.
 
-        {packing} := { 'unpacked' | 'spora_2_5' | 'any' }
+        {packing} := { 'unpacked' | 'spora_2_5' | 'spora_2_6_<address>' | 'any' }
         '''
 
         headers = {
@@ -610,14 +630,20 @@ class Peer(HTTPClient):
         response = self._post(block_announcement, 'block_announcement')
         return response.json()
 
-    def send_block(self, block):
+    def send_block(self, block, arweave_recall_byte : int = None):
         '''Accept a JSON-encoded block with Base64Url encoded fields.'''
-        response = self._post(block, 'block')
+        headers = {}
+        if arweave_recall_byte is not None:
+            headers['arweave-recall-byte'] = str(arweave_recall_byte)
+        response = self._post(block, 'block', headers=headers)
         return response.text # OK
 
-    def send_block2(self, block):
+    def send_block2(self, block, arweave_recall_byte : int = None):
         '''Accept a binary-encoded block.'''
-        response = self._post(block, 'block2')
+        headers = {}
+        if arweave_recall_byte is not None:
+            headers['arweave-recall-byte'] = str(arweave_recall_byte)
+        response = self._post(block, 'block2', headers=headers)
         return response.text # OK
 
     def wallet(self, secret):
@@ -795,7 +821,7 @@ class Peer(HTTPClient):
         Return transaction identifiers (hashes), optionally starting from the earliest_tx,
         for the wallet specified via wallet_address.
         '''
-        if earlieset_tx is not None:
+        if earliest_tx is not None:
             response = self._get('wallet', wallet_address, 'txs', earliest_tx)
         else:
             response = self._get('wallet', wallet_address, 'txs')
@@ -815,6 +841,9 @@ class Peer(HTTPClient):
     def block_hash(self, hash, field = None):
         '''
         Return the JSON-encoded block or field of a block with the given hash.
+
+        field :: nonce | previous_block | timestamp | last_retarget | diff | height | hash |
+        indep_hash | txs | hash_list | wallet_list | reward_addr | tags | reward_pool
 
         {
             "nonce",
@@ -848,7 +877,12 @@ class Peer(HTTPClient):
         return response.json()
 
     def block_height(self, height, field = None):
-        '''Return the JSON-encoded block or field of a block with the given height.'''
+        '''
+        Return the JSON-encoded block or field of a block with the given height.
+
+        field :: nonce | previous_block | timestamp | last_retarget | diff | height | hash |
+        indep_hash | txs | hash_list | wallet_list | reward_addr | tags | reward_pool
+        '''
         if field is not None:
             response = self._get('block/height', str(height), field)
         else:

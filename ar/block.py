@@ -243,9 +243,20 @@ class Block:
                 stream.write(arbinenc(b64dec(tx),                  24))
         return stream.getvalue()
 
-    #def compute_hash(self):
+    # ar_node_utils.erlt / validate_block
+
+    #  POW = ar_randomx_state:hash(Height, << Nonce/binary, BDS/binary >>),
+                # uses randomx_state_by_height
+                        # which calls get_state_by_height, swap_height, randomx_key
+                                    # swap height floors the height to RANDOMX_KEY_SWAP_FREQ
+                            # get_state_by_height and get_key_from_Cache also use swap_height
+                # to branch to one of
+                # ar_mine_randomx: hash_fast, hash_light, init_light;hash_light
+    #   ar_mine:validate(POW, ar_poa:modify_diff(Diff, POA#poa.option, Height), Height)
+
+    #def compute_indep_hash(self): # from ar_http_iface_middleware.erl
     #    bds = self._get_data_segment()
-    #    return bds, ar_weave:indep_hash(BDS, Hash, Nonce, self.poa)
+    #    return bds, ar_weave:indep_hash(BDS, self.hash_row, self.nonce_raw, self.poa)
 
     # from ar_block.erl
     def _get_data_segment(self):

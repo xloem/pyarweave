@@ -1,7 +1,7 @@
 from .peer import Peer
-from . import logger
+from . import logger, ArweaveNetworkException
 
-import bisect
+import bisect, threading, time
 
 class IntervalVector:
     # range: (first, last, state)
@@ -11,17 +11,6 @@ class IntervalVector:
         self.low = low
         self.high = high
         self.ranges = ranges
-    #def get_idx_around(self, offset):
-    #    right_idx = bisect.bisect_right(self.ranges, offset, key=self.key)
-    #    if right_idx == 0:
-    #        # all entries are after offset
-    #        return None
-    #    elif right_idx == len(self.ranges):
-    #        # all entries are prior to offset
-    #        return None
-    #    else:
-    #        left_idx = right_idx - 1
-    #        return left_idx
     def __eq__(self, other):
         if type(other) is self.__class__:
             return self.low == other.low and self.high == other.high and self.ranges == other.ranges
@@ -29,7 +18,7 @@ class IntervalVector:
             return self.ranges == [(
                 (self.low, self.high, other)
             )]
-    # UNLIKE USUAL PYTHON THESE ARE INCLUSIVE OF THE UPPER BOUND
+    # UNLIKE USUAL PYTHON SLICES HERE ARE INCLUSIVE OF THE UPPER BOUND
     def __getitem__(self, idx):
         if type(idx) is slice:
             low = idx.start if idx.start is not None else self.low
@@ -254,7 +243,7 @@ def test_usv_set_range():
 
 class ContentTrackedPeer(Peer):
     def __init__(self, *params, **kwparams):
-        super().__init__(*params, **kwparams)
+        super().__init__(*params, backoff=None, **kwparams)
         self.chunks = IntervalVector()
         #self.chunks_held = IntervalVector()
 
@@ -269,147 +258,167 @@ class ContentTrackedPeer(Peer):
             for high_offset, low_offset in records[::-1]:
                 if expected_offset < low_offset:
                 #    # set the skipped range as missing
-                #    self.chunks_looked |= make_bit_range(expected_offset, low_offset - 1)
                     self.chunks[expected_offset : low_offset - 1] = False
 
                 # set the found range as held
                 self.chunks[low_offset : high_offset] = True
-        #        set_bits = make_bit_range(low_offset, high_offset)
-        #        self.chunks_looked |= set_bits
-        #        self.chunks_held |= set_bits
 
                 # look for the next skipped range
                 expected_offset = high_offset + 1
             lowest_gap = self.chunks.lowest_gap(low=expected_offset, high=last)
         return self.chunks[first:last] == True
 
-        #return chunk_code | ~self.chunks_held == 0
-        #chunk_code = make_bit_range(first, last)
-        #chunk_interval = IntervalVector([(first, last, True)])
+    class DifferentPeerException(ArweaveNetworkException):
+        pass
 
-        ## loop until we have looked at all the requested chunks
-        #while chunk_code & ~self.chunks_looked:
-
-        #    # find needed offsets by masked with unlooked
-        #    mask = chunk_code & ~self.chunks_looked
-        #    # pick out lowest bit by and'ing with twos complement
-        #    mask &= -mask
-        #    # convert from bit code to smallest new offset
-        #    start_offset = mask.bit_length() - 1
-
-        #    records = self.data_sync_record(start = start_offset)
-        #    expected_offset = start_offset
-
-        #    for high_offset, low_offset in records[::-1]:
-        #        if expected_offset < low_offset:
-        #            # set the skipped range as missing
-        #            self.chunks_looked |= make_bit_range(expected_offset, low_offset - 1)
-
-        #        # set the found range as held
-        #        set_bits = make_bit_range(low_offset, high_offset)
-        #        self.chunks_looked |= set_bits
-        #        self.chunks_held |= set_bits
-
-        #        # look for the next skipped range
-        #        expected_offset = high_offset + 1
-
-        #return chunk_code | ~self.chunks_held == 0
-
-def wrap_txid(callable):
-    def wrapped(self, txid, *params, **kwparams):
-        peer = self.tx_peer(txid)
-        return callable(peer, txid, *params, **kwparams)
-    wrapped.__name__ = callable.__name__
-    return wrapped
-def wrap_offset(callable):
-    def wrapped(self, offset, *params, **kwparams):
-        peer = self.chunk_peer(offset)
-        return callable(peer, offset, *params, **kwparams)
-    wrapped.__name__ = callable.__name__
-    return wrapped
+    def on_network_exception(self, text, code, exception, response):
+        raise self.DifferentPeerException(text, code, exception, response)
+    def on_too_many_connections(self):
+        raise self.DifferentPeerException()
 
 class MultiPeer:
-    def __init__(self, initial_peers = None):
+    def __init__(self, initial_peers = None, timeout = None):
         if initial_peers is None:
             initial_peers = []
             self.protected_peers = set(origin['endpoint'].split('://',1)[1] for origin in Peer().health()['origins'])
             initial_peers = set(self.protected_peers)
         else:
             self.protected_peers = set()
+        self.timeout = timeout
         self.backup_peer_queue = set()
         self.peer_queue = set(initial_peers)
         self.peers = []
-    def chunk_peer(self, offset, size=1):
-        first = offset
-        last = first + size - 1
-        for idx, peer in enumerate(self.peers):
-            if peer.has_range(first, last):
-                self.peers = [peer] + self.peers[:idx] + self.peers[idx+1:]
-                logger.info(f'I have a peer with this content. Returning {peer.api_url}.')
-                return peer
-        uninteresting_peers = set()
-        # there may be a better way to do this to ensure that all peers are enumerated.
-        while True:
-            if not len(self.peer_queue):
-                if not len(self.peers):
-                    self.peer_queue = self.backup_peer_queue.difference(uninteresting_peers)
-                    self.backup_peer_queue = set()
-                else:
-                    self.peer_queue.update(set(self.peers[0].peers()).difference(uninteresting_peers))
-            if not len(self.peer_queue):
-                self.backup_peer_queue = uninteresting_peers
-                return None
-            peer_addr = self.peer_queue.pop()
-            peer = ContentTrackedPeer('http://' + peer_addr, timeout = 1, retries = 0)
-            try:
-                has_content = peer.has_range(first, last)
-                if has_content:
-                    if peer_addr in self.protected_peers:
-                        logger.info(f'I found that {peer.api_url} has this content but the peer is protected. Moving on ...')
+        self.struct_lock = threading.Lock()
+
+    def chunk_peer(self, offset, size=1, timeout = None):
+        for peer in self.chunk_peers(offset, size, timeout):
+            return peer
+        return None
+    def chunk_peers(self, offset, size=1, timeout = None):
+        #import pdb; pdb.set_trace()
+        with self.struct_lock:
+            first = offset
+            last = first + size - 1
+            for idx, peer in enumerate(self.peers):
+                if peer.has_range(first, last):
+                    self.peers = [peer] + self.peers[:idx] + self.peers[idx+1:]
+                    logger.info(f'I have a peer with this content. Returning {peer.api_url}.')
+                    yield peer
+            if timeout is None:
+                timeout = self.timeout
+            uninteresting_peers = set()
+            # there is likely a better way to do this to ensure that all peers are enumerated.
+            start_time = time.time()
+            while True:
+                while not len(self.peer_queue):
+                    if time.time() - start_time >= timeout:
                         self.backup_peer_queue.add(peer_addr)
+                        self.backup_peer_queue.update(uninteresting_peers)
+                        raise TimeoutError()
+                        #import pdb; pdb.set_trace()
+                        #return None
+                    #if len(self.peers):
+                    for peer in self.peers:
                         self.peer_queue.update(set(peer.peers()).difference(uninteresting_peers))
-                        continue
-                    peer.chunk2((first+last)//2)
-                    self.peers[:0] = [peer]
-                    logger.info(f'I found that {peer.api_url} has this content. Added to peer list and returning.')
-                    return peer
-                logger.info(f'I checked {peer.api_url} but they did not have the content. Moving on ... {len(self.peer_queue)}')
-                if peer_addr not in self.protected_peers:
+                    for peer_addr in (*self.backup_peer_queue, *self.protected_peers, *uninteresting_peers):
+                        try:
+                            self.peer_queue.update(set(Peer(f'http://{peer_addr}').peers()).difference(uninteresting_peers))
+                        except Exception:
+                            continue
+                        if len(self.peer_queue):
+                            break
+                    if not len(self.peer_queue):
+                        import pdb; pdb.set_trace()
+                        '''peer queue empty after fill'''
+                #if not len(self.peer_queue):
+                    #self.peer_queue = self.backup_peer_queue.difference(uninteresting_peers)
+                    #self.backup_peer_queue = set(self.protected_peers)
+                #if not len(self.peer_queue):
+                #    self.backup_peer_queue = uninteresting_peers
+                #    import pdb; pdb.set_trace()
+                #    return None
+                peer_addr = self.peer_queue.pop()
+                peer = ContentTrackedPeer('http://' + peer_addr, timeout = 1, retries = 0)
+                try:
+                    has_content = peer.has_range(first, last)
+                    if has_content:
+                        if peer_addr in self.protected_peers:
+                            logger.info(f'I found that {peer.api_url} has this content but the peer is protected. Moving on ...')
+                            self.backup_peer_queue.add(peer_addr)
+                            self.peer_queue.update(set(peer.peers()).difference(uninteresting_peers))
+                            continue
+                        peer.chunk2((first+last)//2)
+                        peer = ContentTrackedPeer('http://' + peer_addr, timeout = 30, retries = 2, outgoing_connections = 1)
+                        self.peers[:0] = [peer]
+                        logger.info(f'I found that {peer.api_url} has this content. Added to peer list and returning.')
+                        yield peer
+                        start_time = time.time()
+                    #if len(uninteresting_peers) == 1000:
+                    #    import pdb; pdb.set_trace()
+                    logger.info(f'I checked {peer.api_url} but they did not have the content. Moving on ... {len(uninteresting_peers)}/{len(uninteresting_peers)+len(self.peer_queue)}')
+                    if peer_addr not in self.protected_peers:
+                        uninteresting_peers.add(peer_addr)
+                    else:
+                        self.backup_peer_queue.add(peer_addr)
+                    if not len(self.peers):
+                        try:
+                            more_peers = set(peer.peers()).difference(uninteresting_peers)
+                            self.backup_peer_queue.update(more_peers)
+                        except:
+                            pass
+                except Exception as exc:
                     uninteresting_peers.add(peer_addr)
-                if not len(self.peers):
-                    try:
-                        more_peers = set(peer.peers()).difference(uninteresting_peers)
-                        self.backup_peer_queue.update(more_peers)
-                    except:
-                        pass
-            except Exception as exc:
-                logger.info(f'{peer.api_url} raised {exc}. Moving on ...')
-    def tx_peer(self, txid):
+                    logger.info(f'{peer.api_url} raised {exc}. Moving on ...')
+        import pdb; pdb.set_trace()
+
+    def tx_offset(self, txid):
         if not len(self.peers):
-            #peer = Peer().current_block()['height']#self.chunk_peer(1)
-            txoffset = Peer().tx_offset(txid)
+            return Peer().tx_offset(txid)
         else:
-            #peer = self.peers[0]
-            txoffset = self.peers[0].tx_offset(txid)
-        last = txoffset['offset']
+            return self.peers[0].tx_offset(txid)
+
+    def tx_peer(self, txid):
+        txoffset = self.tx_offset(txid)
         size = txoffset['size']
-        first = last - size + 1
+        first = txoffset['offset'] - size + 1
         return self.chunk_peer(first, size)
 
     def peers(self):
         return [peer.api_url.split('://',1)[1] for peer in self.peers[:16]]
 
-    tx = wrap_txid(Peer.tx)
-    tx2 = wrap_txid(Peer.tx2)
-    tx_data_html = wrap_txid(Peer.tx_data_html)
-    chunk = wrap_offset(Peer.chunk)
-    chunk2 = wrap_offset(Peer.chunk2)
-    chunk_size = wrap_offset(Peer.chunk_size)
-    tx_offset = wrap_txid(Peer.tx_offset)
-    tx_field = wrap_txid(Peer.tx_field)
-    data = wrap_txid(Peer.data)
-    stream = wrap_txid(Peer.stream)
-    peer_stream = wrap_txid(Peer.peer_stream)
+    def _range_call(self, first, size, peer_method, *params, timeout=None, **kwparams):
+        for peer in self.chunk_peers(first, size, timeout=timeout):
+            try:
+                return peer_method(peer, *params, **kwparams)
+            except ContentTrackedPeer.DifferentPeerException as exc:
+                continue
+        raise exc
+        
+    def _wrap_txid(callable):
+        def wrapped(self, txid, *params, **kwparams):
+            txoffset = self.tx_offset(txid)
+            size = txoffset['size']
+            first = txoffset['offset'] - size + 1
+            return self._range_call(first, size, callable, txid, *params, **kwparams)
+        wrapped.__name__ = callable.__name__
+        return wrapped
+    def _wrap_offset(callable):
+        def wrapped(self, offset, *params, **kwparams):
+            return self._range_call(offset, 1, callable, offset, *params, **kwparams)
+        wrapped.__name__ = callable.__name__
+        return wrapped
+
+    tx = _wrap_txid(Peer.tx)
+    tx2 = _wrap_txid(Peer.tx2)
+    tx_data_html = _wrap_txid(Peer.tx_data_html)
+    chunk = _wrap_offset(Peer.chunk)
+    chunk2 = _wrap_offset(Peer.chunk2)
+    chunk_size = _wrap_offset(Peer.chunk_size)
+    #tx_offset = _wrap_txid(Peer.tx_offset)
+    tx_field = _wrap_txid(Peer.tx_field)
+    data = _wrap_txid(Peer.data)
+    stream = _wrap_txid(Peer.stream)
+    peer_stream = _wrap_txid(Peer.peer_stream)
 
     
     def __getattr__(self, attr):

@@ -29,6 +29,7 @@ class Loader:
         return getattr(peer, attr)
 
     def send(self, data, tags):
+        #import pdb; pdb.set_trace()
         di = DataItem(data = data)
         if type(tags) is dict:
             di.header.tags = [create_tag(name, value, 2) for name, value in tags.items()]
@@ -36,8 +37,8 @@ class Loader:
             di.header.tags = [normalize_tag(tag) for tag in tags]
         di.sign(self.wallet.rsa)
         result = self.node.send_tx(di.tobytes())
-        logger.info(result)
-        return result['id']
+        logger.debug(f'{self.node.api_url}: {result}')
+        return result['id'], result['block'], result['public'], result['signature']
 
     # this applies to general bundles and could be part of an ans104-associated base class
     def data(self, txid, bundleid = None, blockid = None):
