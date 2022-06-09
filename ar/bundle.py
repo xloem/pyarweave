@@ -2,15 +2,14 @@ import io
 import json
 import struct
 
-import fastavro
 from Crypto.Hash import SHA256
 from Crypto.Random import get_random_bytes
 
-from .utils import b64dec, b64enc, b64dec_if_not_bytes, b64enc_if_not_str, encode_tag, decode_tag, normalize_tag, tags_to_dict
+from .utils import b64dec, b64enc, b64dec_if_not_bytes, b64enc_if_not_str, varintenc, zigzagenc, varintdec, zigzagdec, encode_tag, decode_tag, normalize_tag, create_tag, tags_to_dict
 from .utils.deep_hash import deep_hash
 from .utils.ans104_signers import DEFAULT as DEFAULT_SIGNER, BY_TYPE as SIGNERS_BY_TYPE
 
-ANS104_TAGS_SCHEMA = {
+ANS104_TAGS_AVRO_SCHEMA = {
   "type": "array",
   "items": {
     "type": "record",
@@ -21,8 +20,6 @@ ANS104_TAGS_SCHEMA = {
     ]
   }  
 }
-
-ANS104_TAGS_SCHEMA_fastavro = fastavro.parse_schema(ANS104_TAGS_SCHEMA)
 
 class ANS104BundleHeader:
     def __init__(self, length_by_id = {}, version = 2):
@@ -121,7 +118,7 @@ class ANS104DataItemHeader:
             return None
 
     @signature.setter
-    def set_signature(self, signature):
+    def signature(self, signature):
         self.raw_signature = b64dec(signature)
 
     @property
@@ -169,16 +166,11 @@ class ANS104DataItemHeader:
     @property
     def tags(self):
         stream = io.BytesIO(self.raw_tags)
-        return fastavro.schemaless_reader(stream, ANS104_TAGS_SCHEMA_fastavro)
+        return self.tagsfromstream(stream)
 
     @tags.setter
     def tags(self, tags):
-        stream = io.BytesIO()
-        fastavro.schemaless_writer(stream, ANS104_TAGS_SCHEMA_fastavro, [
-            normalize_tag(tag) for tag in tags
-        ])
-        self.raw_tags = stream.getvalue()
-        
+        self.raw_tags = self.tagstobytes(tags)
 
     def tojson(self):
         return {
@@ -302,7 +294,7 @@ class ANS104DataItemHeader:
         if raw_tags_len > 0:
             raw_tags = stream.read(raw_tags_len)
             raw_tags_stream = io.BytesIO(raw_tags)
-            tags = fastavro.schemaless_reader(raw_tags_stream, ANS104_TAGS_SCHEMA_fastavro)
+            tags = cls.tagsfromstream(raw_tags_stream)
             offset += raw_tags_len
             if raw_tags_stream.tell() != raw_tags_len or len(tags) != tags_len:
                 raise Exception(f'incorrect tags length')
@@ -323,6 +315,46 @@ class ANS104DataItemHeader:
         assert offset - raw_tags_len == result.get_len_bytes() - len(result.raw_tags)
         assert offset == result.get_len_bytes()
         return result
+
+    @staticmethod
+    def tagsfromstream(stream):
+        def avrolongdec(stream):
+            return zigzagdec(varintdec(stream))
+        def avrobytesdec(stream):
+            count = avrolongdec(stream)
+            assert count >= 0
+            result = stream.read(count)
+            assert len(result) == count
+            return result
+        tags = []
+        while True:
+            block_items = avrolongdec(stream)
+            if block_items == 0:
+                break
+            elif block_items < 0:
+                block_bytes = avrolongdec(stream)
+                block_items = -block_items
+            for block_idx in range(block_items):    
+                name = avrobytesdec(stream)
+                value = avrobytesdec(stream)
+                tags.append(create_tag(name, value, True))
+        return tags
+
+    @staticmethod
+    def tagstobytes(tags):
+        def avrolongenc(num):
+            return varintenc(zigzagenc(num))
+        def avrobytesenc(data):
+            return avrolongenc(len(data)) + data
+        return b''.join((
+            avrolongenc(len(tags)),
+            *(
+                avrobytesenc(tag[key])
+                for tag in (normalize_tag(tag) for tag in tags)
+                for key in ("name", "value")
+            ),
+            b'\0'
+        ))
 
 class DataItem:
     def __init__(self, header = None, data = b'', version = 2):
