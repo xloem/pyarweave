@@ -319,7 +319,20 @@ class ANS104DataItemHeader:
     @staticmethod
     def tagsfromstream(stream):
         def avrolongdec(stream):
-            return zigzagdec(varintdec(stream))
+            # varint encoding is 7-bit little-endian where the 8th bit indicates whether another byte follows
+            zigzag = 0
+            bits = 0
+            while True:
+                byte = stream.read(1)[0]
+                zigzag |= (byte & 0x7f) << bits
+                if byte & 0x80:
+                    bits += 7
+                else:
+                    break
+            # zigzag encoding has the sign bit in the 1s place
+            if zigzag & 1:
+                zigzag = ~zigzag
+            return zigzag >> 1
         def avrobytesdec(stream):
             count = avrolongdec(stream)
             assert count >= 0
@@ -343,7 +356,20 @@ class ANS104DataItemHeader:
     @staticmethod
     def tagstobytes(tags):
         def avrolongenc(num):
-            return varintenc(zigzagenc(num))
+            # zigzag encoding moves the sign bit to the 1s place
+            zigzag = num << 1
+            if zigzag < 0:
+                zigzag = ~zigzag
+            # varint encoding is 7-bit little-endian where the 8th bit indicates whether another byte follows
+            varint = bytearray()
+            while True:
+                byte = zigzag & 0x7f
+                zigzag >>= 7
+                if zigzag:
+                    varint.append(byte | 0x80)
+                else:
+                    varint.append(byte)
+                    return varint
         def avrobytesenc(data):
             return avrolongenc(len(data)) + data
         return b''.join((

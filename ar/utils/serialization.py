@@ -60,34 +60,3 @@ def arintenc(integer, bits):
 def arintdec(stream, bits):
     size = int.from_bytes(stream.read(bits // 8), 'big')
     return int.from_bytes(stream.read(size), 'big')
-
-def varintenc(num):
-    output = bytearray()
-    while True:
-        byte = num & 0x7f
-        num >>= 7
-        if num:
-            output.append(byte | 0x80)
-        else:
-            output.append(byte)
-            return output
-
-def varintdec(stream):
-    result = 0
-    bits = 0
-    while True:
-        byte = stream.read(1)[0]
-        result |= (byte & 0x7f) << bits
-        if byte & 0x80:
-            bits += 7
-        else:
-            return result
-
-def zigzagenc(num):
-    num <<= 1
-    return ~num if num < 0 else num
-
-def zigzagdec(zz):
-    if zz & 1:
-        zz = ~zz
-    return zz >> 1
