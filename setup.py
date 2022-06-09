@@ -33,7 +33,6 @@ setup(
     'python-jose', # for jwk parsing: note use of jwk is very simple, likely this is unneeded
     'pycryptodome', # core crypto backend
     'requests', # core network backend
-    'fastavro', # for ans104 tag serialization, rare format
     'erlang_py', # for decoding some rare binary peer data
     #'pyrx', # for block validation, could be made optional if there is a trusted node
     # note: pyrx is only available via git url; RandomX is on pypi
