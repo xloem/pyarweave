@@ -5,7 +5,7 @@ import struct
 from Crypto.Hash import SHA256
 from Crypto.Random import get_random_bytes
 
-from .utils import b64dec, b64enc, b64dec_if_not_bytes, b64enc_if_not_str, varintenc, zigzagenc, varintdec, zigzagdec, encode_tag, decode_tag, normalize_tag, create_tag, tags_to_dict
+from .utils import b64dec, b64enc, b64dec_if_not_bytes, b64enc_if_not_str, encode_tag, decode_tag, normalize_tag, create_tag, tags_to_dict
 from .utils.deep_hash import deep_hash
 from .utils.ans104_signers import DEFAULT as DEFAULT_SIGNER, BY_TYPE as SIGNERS_BY_TYPE
 
