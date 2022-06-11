@@ -1,3 +1,9 @@
+import json
+
+from .utils import create_tag
+
+CONTENT_TYPE = 'application/x.arweave-manifest+json'
+
 class Manifest:
     def __init__(self, path_txids, index = None, version = '0.1.0'):
         self.path_txids = path_txids
@@ -27,3 +33,8 @@ class Manifest:
                 for path, txid in self.path_txids.items()
             }
         )
+    def tobytes(self):
+        return json.dumps(self.tojson()).encode()
+    @staticmethod
+    def totags():
+        return [create_tag('Content-Type', CONTENT_TYPE, True)]
