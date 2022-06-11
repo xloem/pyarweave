@@ -51,7 +51,7 @@ class Loader:
             dataitem = DataItem.fromstream(stream, length = end - offset)
             data = dataitem.data
         else:
-            data = self.data(txid)
+            data = self.preferred.data(txid)
         logger.warning(f'{txid} was not verified') # check the hash tree
         return data
     FULL_BLOCK_REQ = b'\xff' * 125
