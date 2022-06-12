@@ -115,6 +115,7 @@ ZEROS32 = bytes(32)
 ZEROS48 = bytes(48)
 
 import threading
+#global_debug_lock = threading.Lock()
 
 class BackedStructur:
     '''An array of 'bytes' items all the same size.
@@ -316,6 +317,9 @@ class BackedStructur:
     def flush(self):
         with self.lock:
             if self.dirty:
+                #if self.name == 'DataItems':
+                #    import pdb; pdb.set_trace()
+                #    "self.name == 'DataItems'"
                 assert len(self.shadow) == self.size
                 tags = [*self.tags]
                 try:
@@ -329,21 +333,36 @@ class BackedStructur:
                 change_tag(tags, 'Item-Size', str(self.item_size), condense_to_one=True)
                 change_tag(tags, 'Item-Count', str(self.item_count), condense_to_one=True)
                 self.get_mined(peek=True) # fills block_raw if available
+                #full = self._id_raw is not None and self._block_raw is not None and self._bundle_raw is not None
                 if self._id_raw is not None:
                     change_tag(tags, 'Previous-Revision', b64enc(self._id_raw), condense_to_one=True)
                 if self._block_raw is not None:
                     change_tag(tags, 'Previous-Revision-Block', b64enc(self._block_raw), condense_to_one=True)
                 if self._bundle_raw is not None:
                     change_tag(tags, 'Previous-Revision-Bundle', b64enc(self._bundle_raw), condense_to_one=True)
+                #global_debug_lock.acquire()
+                #import pdb; pdb.set_trace()
                 assert len(self.shadow) == self.size
-                #if 'lock' not in globals():
-                #    globals()['lock'] = threading.Lock()
+
+                #if self._bundle_raw is None and self._id_raw is not None: # this block is mostly for debugging
+                #    self.lock.release()
+                #    try:
+                #        self.bundle_raw
+                #    finally:
+                #        self.lock.acquire()                    
+                if self._bundle_raw is not None:
+                    prevdata = self.loader.data(txid = b64enc(self._id_raw), bundleid = b64enc(self._bundle_raw))
+                    assert prevdata != self.shadow
+                    difference = int.from_bytes(prevdata, 'little') ^ int.from_bytes(self.shadow, 'little')
+                    difference = difference.bit_count()
+                else:
+                    difference = 'unknown'
                 #with globals()['lock']: #dbg
                 #    import pdb; pdb.set_trace()
                 id, *extra = self.loader.send(self.shadow, tags=tags)
-                if self._id_raw and self._block_raw and self._bundle_raw:
+                #if full:
                     #import pdb ; pdb.set_trace()
-                    ar.logger.info(f'sent {id} with tags {tags} {extra[:1]}.')
+                ar.logger.info(f'sent {id} with tags {tags} {extra[:1]}: {difference} bits differ')
                 self._id_raw = b64dec(id)
                 self._bundle_raw = None
                 self._block_raw = None
@@ -438,7 +457,8 @@ class TableDoc:
 
     def _set_obj_list(self, idx, value):
         self.obj_list[idx] = value
-        self.remote_data.dirty = True
+        # this function is called for construction of unmodified data
+        #self.remote_data.dirty = True
 
     def _get_filling_if_needed(self, hash_digit):
         #with self.lock:
@@ -511,6 +531,7 @@ class TableDoc:
                         outer_idx = hash_digit,
                     )
                     example_digit = example_digits[subtable.depth]
+                    subtable.remote_data.dirty = True
                     subtable._set_obj_list(example_digit, (entry_type, entry)) # replaced entry
                     # since evaluation continues, the new entry will be added below
                     #subtable.add(hash_digits, block_raw, txid_raw, dataitem_raw) # new entry
@@ -554,6 +575,7 @@ class TableDoc:
                 entry.add(hash_digits, block_raw, txid_raw, dataitem_raw) # new entry
             else:
                 raise StructureException('unhandled table entry type', entry_type)
+            self.remote_data.dirty = True
             self._set_obj_list(hash_digit, (entry_type, entry))
 
     def get(self, hash_digits):
@@ -655,33 +677,40 @@ class TableDoc:
 
     def flush(self, top_down=False, include_unmined=True):
         #import pdb; pdb.set_trace()
+        #if self.remote_data.name == 'DataItems':
+        #    import pdb; pdb.set_trace()
+        #    "self.remote_data.name == 'DataItems'"
         if not top_down:
             while self.flush_leaves():
                 pass
         else:
             #import pdb; pdb.set_trace()
             if include_unmined:
+                #global_debug_lock.acquire()
                 #import pdb; pdb.set_trace()
                 if self.remote_data._id_raw is None:
                     ar.logger.info(f'TableDoc.flush(): flushing new tabledoc with depth {self.depth}')
                 else:
                     ar.logger.info(f'TableDoc.flush(): flushing tabledoc {b64enc(self.remote_data._id_raw)} with depth {self.depth}')
             self.remote_data.get()
-            with self.remote_data: # old code flushes at close of context
-                with self.lock:
-                    for idx, (entry_type, entry) in enumerate(self.obj_list):
-                        if isinstance(entry, (bytes, bytearray)):
-                            continue
-                        if entry_type == self.EMPTY:
-                            continue
-                        elif entry_type in (self.TABLE, self.MANY):
-                            if not include_unmined and entry.remote_data.dirty or not entry.remote_data.get_mined(peek=True):
-                                continue
-                            entry = entry.raw_ids
-                        elif entry_type == self.DATA:
-                            entry = b''.join(entry[1])
-                        self.remote_data[idx] = bytes([entry_type]) + entry
-                # plausible race condition on this line between locks, seems non-impactful
+            with self.lock:
+                for idx, (entry_type, entry) in enumerate(self.obj_list):
+                    if isinstance(entry, (bytes, bytearray)):
+                        continue
+                    if entry_type == self.EMPTY:
+                        continue
+                    elif entry_type in (self.TABLE, self.MANY):
+                        assert include_unmined or (not entry.remote_data.dirty and entry.remote_data.get_mined(peek=True))
+                        #if not include_unmined and (entry.remote_data.dirty or not entry.remote_data.get_mined(peek=True)):
+                        #    import pdb; pdb.set_trace()
+                        #    # leaf isn't mined; is it correct that this node was flushed down here?
+                        #    return
+                        entry = entry.raw_ids
+                    elif entry_type == self.DATA:
+                        entry = b''.join(entry[1])
+                    self.remote_data[idx] = bytes([entry_type]) + entry
+            self.remote_data.flush()
+            # plausible race condition on this line between locks, seems non-impactful
 
     @property
     def ids(self):
@@ -773,7 +802,7 @@ class BundleIndexer:
                 metadata = json.load(file)
             id = metadata['id']
             bundle = metadata['bundle']
-            block =metadata['block']
+            block = metadata['block']
         if id is not None:
             id_raw = b64dec_if_not_bytes(id)
             tags = [tag for tag in loader.tags(id, bundle, block) if tag['name'] not in (b'Application', b'Previous-Revision', b'Previous-Revision-Block', b'Previous-Revision-Bundle')]
@@ -971,7 +1000,7 @@ def makedefault():
     wallet = Wallet.from_data(wallet)
     node = Node()
     gateway_peer_ct = len(Peer('https://arweave.net').health()['origins'])
-    querying_gateway = Peer('https://arweave.net', outgoing_connections = 600, requests_per_period = 600, period_sec = 60*5)
+    querying_gateway = Peer('https://arweave.net', outgoing_connections = 512, requests_per_period = 600, period_sec = 60*5)
     #if not "gateway":
     if "gateway":
         real_peer = Peer(Peer('https://arweave.net').health()['origins'][0]['endpoint'])
