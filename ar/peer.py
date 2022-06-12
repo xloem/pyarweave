@@ -135,6 +135,13 @@ class HTTPClient:
                 finally:
                     self.outgoing_connection_semaphore.release()
 
+                if response.status_code == 400:
+                    try:
+                        msg = response.json()['error']
+                    except:
+                        msg = response.text
+                    raise ArweaveException(msg)
+
                 response.raise_for_status()
                 if int(response.headers.get('content-length', 1)) == 0:
                     raise ArweaveException(f'Empty response from {url}')
