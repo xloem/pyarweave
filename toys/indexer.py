@@ -350,15 +350,17 @@ class BackedStructur:
                 self.dirty = False
 
 class WorkerPool:
-    def __init__(self, action, max_jobs, retries = 4):
+    halt_from_exception = False
+    def __init__(self, action, max_jobs, retries = 4, halt_on_exceptions = True):
         self.action = action
         self.max_jobs = max_jobs
         self.retries = retries
+        self.halt_on_exceptions = halt_on_exceptions
         self.job_semaphore = threading.BoundedSemaphore(max_jobs)
     def single_job(self, input, output, idx, exceptions):
         tries = self.retries
         exc = None
-        while tries > 0:
+        while tries > 0 and (WorkerPool.halt_from_exception is False): #or not self.halt_on_exceptions):
             try:
                 ar.logger.debug(f'starting {self.action}-{idx}')
                 output[idx] = self.action(input[idx])
@@ -367,29 +369,36 @@ class WorkerPool:
                 break
             except Exception as e:
                 ar.logger.warning(f'job {self.action}-{idx} threw exception {type(e)} {e}')
+                import traceback; traceback.print_exc()
                 tries -= 1
                 exc = e if exc is None else exc
+                if self.halt_on_exceptions and WorkerPool.halt_from_exception is False:
+                    WorkerPool.halt_from_exception = exc
         if exc is not None:
             exceptions.append((idx, exc))
         self.job_semaphore.release()
+    def _halt_if_time(self, exceptions = []):
+        # this logic might be wrong not sure, maybe two flags are needed?
+        if len(exceptions):
+            if self.halt_on_exceptions:
+                WorkerPool.halt_from_exception = exceptions[0][1]
+            ar.logger.warning(f'detected job exception')
+            raise exceptions[0][1]
+        elif WorkerPool.halt_from_exception is not False: # and self.halt_on_exceptions
+            raise WorkerPool.halt_from_exception #Exception('exception raised in parallel worker')
     def process(self, data):
         output = ['job not complete'] * len(data)
         exceptions = []
         for idx in range(len(data)):
-            if len(exceptions):
-                ar.logger.warning(f'detected job exception')
-                raise exceptions[0][1]
+            self._halt_if_time(exceptions)
             ar.logger.debug(f'queueing {self.action}-{idx}')
             self.job_semaphore.acquire() # blocks at max_jobs
             threading.Thread(target=self.single_job, args=(data, output, idx, exceptions)).start()
         for done in range(self.max_jobs): # wait for all to complete. this should indeed be max_jobs to exhaust all the semaphores.
-            if len(exceptions):
-                ar.logger.warning(f'detected job exception')
-                raise exceptions[0][1]
+            self._halt_if_time(exceptions)
             self.job_semaphore.acquire()
         if len(exceptions):
-                ar.logger.warning(f'detected job exception')
-                raise exceptions[0][1]
+                self._halt_if_time(exceptions)
         return output
 
 class TableDoc:
@@ -859,7 +868,7 @@ class BundleIndexer:
         ar.logger.info(f'{block.indep_hash}: fetching txs_tags')
         txs_tags = WorkerPool(
             action = lambda tx: tx.tags if type(tx) is ar.Transaction else loader.tags(tx),
-            max_jobs = loader.gateway.max_outgoing_connections,
+            max_jobs = 32,#loader.gateway.max_outgoing_connections,
         ).process(block.txs)
 
         for idx, (tx_tags, tx) in enumerate(zip(txs_tags, block.txs)):
@@ -983,10 +992,10 @@ if __name__ == '__main__':
     then = time.time()
     chunksize = 500
     if (indexer.next_block - 1) % chunksize != 0:
-        indexer.add_forward(chunksize - ((indexer.next_block - 1) % chunksize), 50)
+        indexer.add_forward(chunksize - ((indexer.next_block - 1) % chunksize), 32)
         indexer.save()
     if (indexer.prev_block + 1) % chunksize != 0:
-        indexer.add_backward(((indexer.prev_block + 1) % chunksize), 50)
+        indexer.add_backward(((indexer.prev_block + 1) % chunksize), 32)
         indexer.save()
     while True:
         #WorkerPool(
