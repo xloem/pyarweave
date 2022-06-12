@@ -213,11 +213,11 @@ class HTTPClient:
                 elif status_code == 520:
                     # cloudfront broke
                     self._ratelimit_epilogue(True)
-                    return self._post(*params, **request_kwparams)
+                    return self._post(data = data, *params, headers = headers, **request_kwparams)
                 elif status_code == 502:
                     # cloudflare broke
                     self._ratelimit_epilogue(True)
-                    return self._post(*params, **request_kwparams)
+                    return self._post(data = data, *params, headers = headers, **request_kwparams)
                 self.on_network_exception(text, status_code, exc, response)
                 raise ArweaveNetworkException(text, status_code, exc, response)
             except Exception:
