@@ -50,9 +50,10 @@ class BundleWatcher:
             old_block_txs = new_block_txs
             old_pending_txs = new_pending_txs
             now = time.time()
-            if mark + 30 > now:
-                time.sleep(now - mark + 30)
-                mark += 30
+            period = 30
+            if mark + period > now:
+                time.sleep(mark + period - now)
+                mark += period
             else:
                 mark = now
 
