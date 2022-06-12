@@ -589,7 +589,7 @@ class TableDoc:
         elif entry_type == self.DATA:
             return [entry[1]]
         elif entry_type == self.MANY:
-            return [*entry]
+            return [subentry[1] for subentry in entry]
         else:
             raise StructureException('unhandled table entry type', entry_type)
 
@@ -700,11 +700,10 @@ class TableDoc:
                     if entry_type == self.EMPTY:
                         continue
                     elif entry_type in (self.TABLE, self.MANY):
-                        assert include_unmined or (not entry.remote_data.dirty and entry.remote_data.get_mined(peek=True))
-                        #if not include_unmined and (entry.remote_data.dirty or not entry.remote_data.get_mined(peek=True)):
-                        #    import pdb; pdb.set_trace()
-                        #    # leaf isn't mined; is it correct that this node was flushed down here?
-                        #    return
+                        #assert include_unmined or (not entry.remote_data.dirty and entry.remote_data.get_mined(peek=True))
+                        if not include_unmined and (entry.remote_data.dirty or not entry.remote_data.get_mined(peek=True)):
+                            # hopefully this just happens because the leaf is updated before it is flushed
+                            return
                         entry = entry.raw_ids
                     elif entry_type == self.DATA:
                         entry = b''.join(entry[1])
