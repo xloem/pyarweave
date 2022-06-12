@@ -272,13 +272,13 @@ class Transaction(object):
             self.data = ''
 
         data = {
-            'data': self.data.decode() if type(self.data) == bytes else self.data,
-            'id': self.id.decode() if type(self.id) == bytes else self.id,
+            'data': utf8dec_if_bytes(self.data),
+            'id': utf8dec_if_bytes(self.itd),
             'last_tx': self.last_tx,
             'owner': self.owner,
             'quantity': self.quantity,
             'reward': self.reward,
-            'signature': self.signature.decode(),
+            'signature': utf8dec_if_bytes(self.signature),
             'tags': self.tags,
             'target': self.target
         }
@@ -288,7 +288,7 @@ class Transaction(object):
             data['tags'] = self.tags
             data['format'] = 2
             if len(self.data_root) > 0:
-                data['data_root'] = self.data_root.decode()
+                data['data_root'] = utf8dec_if_bytes(self.data)
             else:
                 data['data_root'] = ''
             data['data_size'] = str(self.data_size)
