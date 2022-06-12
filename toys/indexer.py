@@ -448,7 +448,7 @@ class TableDoc:
             else:
                 self.depth = parent.depth + 1
             self.total_height = parent.total_height
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
         self.obj_list = [
             (entry_raw[0], entry_raw[1:113])
             for entry_raw in self.remote_data
