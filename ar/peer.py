@@ -116,113 +116,70 @@ class HTTPClient:
             self.on_too_many_requests()
 
     # _get and _post should just call a _request function to share code
-    def _get(self, *params, **request_kwparams):
-        self._ratelimit_prologue()
-
+    def _request(self, *params, **request_kwparams):
         if len(params) and params[-1][0] == '?':
             url = self.api_url + '/' + '/'.join(params[:-1]) + params[1]
         else:
             url = self.api_url + '/' + '/'.join(params)
-        if not self.outgoing_connection_semaphore.acquire(blocking=False):
-            self.on_too_many_connections()
-            logger.info(f'Waiting for connection count limit semaphore to drain...')
-            self.outgoing_connection_semaphore.acquire()
-
-        try:
-            try:
-                response = None
-                response = self.session.request(**{'method': 'GET', 'url': url, 'timeout': self.timeout, **request_kwparams})
-            finally:
-                self.outgoing_connection_semaphore.release()
-            response.raise_for_status()
-            if int(response.headers.get('content-length', 1)) == 0:
-                raise ArweaveException(f'Empty response from {url}')
-            if response.status_code not in (200, 206):
-                raise ArweaveException(response.text)
-            self._ratelimit_epilogue(True)
-            return response
-        except requests.exceptions.RequestException as exc:
-            text = response if response is None else response.text
-            status_code = 0 if response is None else response.status_code
-            logger.error(exc, text)
-            if status_code == 429:
-                # too many requests
-                self._ratelimit_epilogue(False)
-                return self._get(*params, **request_kwparams)
-            elif status_code == 520:
-                # cloudfront broke
-                self._ratelimit_epilogue(True)
-                return self._get(*params, **request_kwparams)
-            elif status_code == 502:
-                # cloudflare broke
-                self._ratelimit_epilogue(True)
-                return self._get(*params, **request_kwparams)
-            self.on_network_exception(text, status_code, exc, response)
-            raise ArweaveNetworkException(text, status_code, exc, response)
-        except Exception:
-            self._ratelimit_epilogue(True)
-            raise
-
-    def _post(self, data, *params, headers = {}, **request_kwparams):
-
-        if len(params) and params[-1][0] == '?':
-            url = self.api_url + '/' + '/'.join(params[:-1]) + params[1]
-        else:
-            url = self.api_url + '/' + '/'.join(params)
-
-        headers = {**headers}
 
         while True:
             self._ratelimit_prologue()
+            response = None
             try:
                 if not self.outgoing_connection_semaphore.acquire(blocking=False):
                     self.on_too_many_connections()
                     logger.info(f'Waiting for connection count limit semaphore to drain...')
                     self.outgoing_connection_semaphore.acquire()
                 try:
-                    response = None
-                    if type(data) is dict:
-                        if type(data) is dict:
-                            headers.setdefault('Content-Type', 'application/json')
-                        response = self.session.request(**{'method': 'POST', 'url': url, 'json': data, 'headers': headers, 'timeout': self.timeout, **request_kwparams})
-                    else:
-                        if isinstance(data, (bytes, bytearray)):
-                            headers.setdefault('Content-Type', 'application/octet-stream')
-                        else:
-                            headers.setdefault('Content-Type', 'text/plain')
-                        response = self.session.request(**{'method': 'POST', 'url': url, 'data': data, 'headers': headers, 'timeout': self.timeout, **request_kwparams})
+                    response = self.session.request(**{'url': url, 'timeout': self.timeout, **request_kwparams})
                 finally:
                     self.outgoing_connection_semaphore.release()
 
-                # logger.debug('{}\n\n{}'.format(response.text, data))
                 response.raise_for_status()
                 if int(response.headers.get('content-length', 1)) == 0:
                     raise ArweaveException(f'Empty response from {url}')
                 self._ratelimit_epilogue(True)
-                # logger.debug('RESPONSE 200: {}'.format(response.text))
                 return response
             except requests.exceptions.RequestException as exc:
                 text = '' if response is None else response.text
                 status_code = 0 if response is None else response.status_code
-                logger.error('{}\n{}\n\n{}'.format(exc, text, data))
                 if status_code == 429:
                     # too many requests
                     self._ratelimit_epilogue(False)
                     self.on_too_many_requests()
                     continue
-                elif status_code == 520:
+                logger.error('{}\n{}\n\n{}'.format(exc, text, request_kwparams))
+                if status_code == 520:
                     # cloudfront broke
                     self._ratelimit_epilogue(True)
-                    return self._post(data = data, *params, headers = headers, **request_kwparams)
+                    continue
                 elif status_code == 502:
                     # cloudflare broke
                     self._ratelimit_epilogue(True)
-                    return self._post(data = data, *params, headers = headers, **request_kwparams)
+                    continue
                 self.on_network_exception(text, status_code, exc, response)
                 raise ArweaveNetworkException(text, status_code, exc, response)
-            except Exception:
+            except:
                 self._ratelimit_epilogue(True)
                 raise
+
+    def _get(self, *params, **request_kwparams):
+        return self._request(*params, **{'method': 'GET', **request_kwparams})
+
+    def _post(self, data, *params, headers = {}, **request_kwparams):
+        headers = {**headers}
+
+        if type(data) is dict:
+            headers.setdefault('Content-Type', 'application/json')
+            data_key = 'json'
+        else:
+            if isinstance(data, (bytes, bytearray)):
+                headers.setdefault('Content-Type', 'application/octet-stream')
+            else:
+                headers.setdefault('Content-Type', 'text/plain')
+            data_key = 'data'
+
+        return self._request(*params, **{'method': 'POST', 'headers': headers, **{data_key: data}, **request_kwparams})
 
     def on_network_exception(self, text, code, exception, response):
         raise ArweaveNetworkException(text, code, exception, response)
