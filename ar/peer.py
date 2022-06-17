@@ -18,7 +18,7 @@ def binary_to_term(b):
     return erlang.binary_to_term(b)
 
 class HTTPClient:
-    def __init__(self, api_url, timeout = None, retries = 10, outgoing_connections = DEFAULT_REQUESTS_PER_MINUTE_LIMIT, requests_per_period = DEFAULT_REQUESTS_PER_MINUTE_LIMIT, period_sec = 60):
+    def __init__(self, api_url, timeout = None, retries = 10, outgoing_connections = 256, requests_per_period = DEFAULT_REQUESTS_PER_MINUTE_LIMIT, period_sec = 60, extra_headers = {}):
         self.api_url = api_url
         self.session = requests.Session()
         self.max_outgoing_connections = outgoing_connections
@@ -27,7 +27,8 @@ class HTTPClient:
         self.requests_per_period = requests_per_period
         self.ratelimited_requests = 0
         self.period_sec = period_sec
-        self.req_history = []
+        self.incoming_port = incoming_port
+        self.extra_headers = extra_headers
         max_retries = requests.adapters.Retry(total=retries, backoff_factor=0.1, status_forcelist=[500,502,503,504]) # from so
         adapter = requests.adapters.HTTPAdapter(
             pool_connections = outgoing_connections,
@@ -86,6 +87,10 @@ class HTTPClient:
             if len(self.req_history) >= self.requests_per_period:
                 duration = self.req_history[-self.requests_per_period+1] + self.period_sec - now
                 if duration > 0:
+                    if duration > 0.5:
+                        # quick workaround to let this display later during lock contention
+                        time.sleep(0.5)
+                        duration -= 0.5
                     logger.info(f'Sleeping for {int(duration*100)/100}s to respect ratelimit of {self.requests_per_period}req/{self.period_sec}s ...')
                     time.sleep(duration)
                     #import pdb; pdb.set_trace()
@@ -121,6 +126,9 @@ class HTTPClient:
             url = self.api_url + '/' + '/'.join(params[:-1]) + params[1]
         else:
             url = self.api_url + '/' + '/'.join(params)
+
+        headers = {**self.extra_headers, **request_kwparams.get('headers', {})}
+        request_kwparams['headers'] = headers
 
         while True:
             self._ratelimit_prologue()
@@ -202,8 +210,11 @@ class Peer(HTTPClient):
     # - https://docs.arweave.org/developers/server/http-api
     # - https://github.com/ArweaveTeam/arweave/blob/master/apps/arweave/src/ar_http_iface_middleware.erl#L132
     # - https://github.com/ArweaveTeam/arweave/blob/master/apps/arweave/src/ar_http_iface_client.erl
-    def __init__(self, api_url = DEFAULT_API_URL, timeout = None, retries = 5, outgoing_connections = DEFAULT_REQUESTS_PER_MINUTE_LIMIT, requests_per_period = DEFAULT_REQUESTS_PER_MINUTE_LIMIT, period_sec = 60):
-        super().__init__(api_url, timeout, retries, outgoing_connections, requests_per_period, period_sec)
+    def __init__(self, api_url = DEFAULT_API_URL, timeout = None, retries = 5, outgoing_connections = DEFAULT_REQUESTS_PER_MINUTE_LIMIT, requests_per_period = DEFAULT_REQUESTS_PER_MINUTE_LIMIT, period_sec = 60, incoming_port = None):
+        super().__init__(
+            api_url, timeout, retries, outgoing_connections, requests_per_period, period_sec,
+            extra_headers = {'X-P2p-Port':str(incoming_port)} if incoming_port is not None else {}
+        )
 
     def info(self):
         '''
@@ -754,7 +765,7 @@ class Peer(HTTPClient):
     def send_peers(self):
         '''
         Share your IP with another peer.
-        Deprecated: To make a node learn your IP, you can make any request to it.
+        Deprecated: To make a node learn your IP, you can make any request to it. The port is inferred from the X-P2p-Port header.
         '''
         response = self._post(None, 'peers')
         return response.text # OK
