@@ -134,7 +134,7 @@ class Transaction(object):
             id = b64enc(id_raw),
             wallet = wallet,
             target = b64enc(target_raw),
-            quantity = str(quantity),
+            quantity = winston_to_ar(quantity),
             reward = str(reward),
             data = data_raw,
         )
