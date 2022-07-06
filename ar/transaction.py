@@ -272,8 +272,8 @@ class Transaction(object):
             'id': utf8dec_if_bytes(self.id),
             'last_tx': self.last_tx,
             'owner': self.owner,
-            'quantity': ar_to_winston(self.quantity),
-            'reward': ar_to_winston(self.reward),
+            'quantity': self.quantity,
+            'reward': self.reward,
             'signature': utf8dec_if_bytes(self.signature),
             'tags': self.tags,
             'target': self.target
@@ -284,7 +284,7 @@ class Transaction(object):
             data['tags'] = self.tags
             data['format'] = 2
             if len(self.data_root) > 0:
-                data['data_root'] = utf8dec_if_bytes(self.data)
+                data['data_root'] = utf8dec_if_bytes(self.data_root)
             else:
                 data['data_root'] = ''
             data['data_size'] = str(self.data_size)
