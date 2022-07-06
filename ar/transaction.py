@@ -134,8 +134,8 @@ class Transaction(object):
             id = b64enc(id_raw),
             wallet = wallet,
             target = b64enc(target_raw),
-            quantity = winston_to_ar(quantity),
-            reward = winston_to_ar(reward),
+            quantity = str(quantity),
+            reward = str(reward),
             data = data_raw,
         )
         tx.data_size = data_size
@@ -151,11 +151,11 @@ class Transaction(object):
             arbinenc(b64dec(self.last_tx), 8),
             arbinenc(b64dec(self.owner), 16),
             arbinenc(b64dec(self.target), 8),
-            arintenc(int(ar_to_winston(self.quantity)), 8),
+            arintenc(int(self.quantity), 8),
             arintenc(self.data_size, 16),
             arbinenc(b64dec(self.data_root), 8),
             arbinenc(b64dec(self.signature), 16),
-            arintenc(int(ar_to_winston(self.reward)), 8),
+            arintenc(int(self.reward), 8),
             arbinenc(b64dec(self.data), 24),
             
             len(self.tags).to_bytes(2, 'big'),
@@ -185,7 +185,7 @@ class Transaction(object):
 
     def get_reward(self, data_size, target_address=None):
         reward = self.peer.price(data_size, target_address)
-        return winston_to_ar(reward)
+        return str(reward)
 
     def add_tag(self, name, value):
         tag = create_tag(name, value, self.format == 2)
@@ -211,7 +211,7 @@ class Transaction(object):
             self.id = self.id.decode()
 
     def get_signature_data(self):
-        self.reward = str(self.get_reward(self.data_size, target_address=self.target if len(self.target) > 0 else None))
+        self.reward = self.get_reward(self.data_size, target_address=self.target if len(self.target) > 0 else None)
 
         if int(self.data_size) > 0 and self.data_root == '' and not self.uses_uploader:
             if type(self.data) == str:
