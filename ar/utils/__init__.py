@@ -12,7 +12,7 @@
 # You should have received a copy of the GNU General Public License along with
 # PyArweave. If not, see <https://www.gnu.org/licenses/>.
 
-import decimal
+import decimal, math
 import hashlib
 import struct
 from Crypto.Signature import PKCS1_PSS
@@ -109,7 +109,7 @@ def winston_to_ar(winston) -> float:
 
   
 def ar_to_winston(ar_amount: str) -> str:
-    return str(decimal.Decimal(ar_amount) * 10**12)
+    return str(math.ceil(decimal.Decimal(ar_amount) * 10**12))
 
 
 def concat_buffers(buffers):

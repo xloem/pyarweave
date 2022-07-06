@@ -260,12 +260,7 @@ class Transaction(object):
         return signature_data
 
     def send(self):
-        try:
-            self.peer.send_tx(self.json_data)
-        except ArweaveException:
-            pass
-
-        return self.last_tx
+        return self.peer.send_tx(self.json_data)
 
     def to_dict(self):
 
@@ -277,8 +272,8 @@ class Transaction(object):
             'id': utf8dec_if_bytes(self.id),
             'last_tx': self.last_tx,
             'owner': self.owner,
-            'quantity': self.quantity,
-            'reward': self.reward,
+            'quantity': ar_to_winston(self.quantity),
+            'reward': ar_to_winston(self.reward),
             'signature': utf8dec_if_bytes(self.signature),
             'tags': self.tags,
             'target': self.target
