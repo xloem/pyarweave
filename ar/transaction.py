@@ -12,12 +12,13 @@ from .utils import (
     b64enc, b64dec,
     arbinenc, arbindec,
     arintenc, arintdec,
+    utf8dec_if_bytes
 )
 from .peer import Peer
 from .wallet import Wallet
 from .utils.deep_hash import deep_hash
 from .utils.merkle import compute_root_hash, generate_transaction_chunks
-from . import logger
+from . import logger, ArweaveException
 
 class Transaction(object):
     def __init__(self, wallet, **kwargs):
@@ -273,7 +274,7 @@ class Transaction(object):
 
         data = {
             'data': utf8dec_if_bytes(self.data),
-            'id': utf8dec_if_bytes(self.itd),
+            'id': utf8dec_if_bytes(self.id),
             'last_tx': self.last_tx,
             'owner': self.owner,
             'quantity': self.quantity,

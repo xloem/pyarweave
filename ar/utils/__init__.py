@@ -12,6 +12,7 @@
 # You should have received a copy of the GNU General Public License along with
 # PyArweave. If not, see <https://www.gnu.org/licenses/>.
 
+import decimal
 import hashlib
 import struct
 from Crypto.Signature import PKCS1_PSS
@@ -104,11 +105,11 @@ def owner_to_address(owner):
 
 
 def winston_to_ar(winston) -> float:
-    return float(winston) / 1000000000000
+    return decimal.Decimal(winston) / 1000000000000
 
   
 def ar_to_winston(ar_amount: str) -> str:
-    return str(int(float(ar_amount) * 10**12))
+    return str(decimal.Decimal(ar_amount) * 10**12)
 
 
 def concat_buffers(buffers):
