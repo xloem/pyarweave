@@ -335,7 +335,7 @@ class Transaction(object):
         self.signature = json_data.get('signature', '')
         self.tags = [decode_tag(tag) for tag in json_data.get('tags', [])]
         self.target = json_data.get('target', '')
-        self.data_size = json_data.get('data_size', '0')
+        self.data_size = int(json_data.get('data_size', '0'))
         self.data_root = json_data.get('data_root', '')
         self.data_tree = json_data.get('data_tree', [])
 
