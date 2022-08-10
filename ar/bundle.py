@@ -379,7 +379,7 @@ class ANS104DataItemHeader:
                 for tag in (normalize_tag(tag) for tag in tags)
                 for key in ("name", "value")
             ),
-            b'\0'
+            b'\0' if len(tags) else b''
         ))
 
 class DataItem:
