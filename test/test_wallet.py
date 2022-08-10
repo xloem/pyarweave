@@ -34,7 +34,7 @@ def test_get_balance():
     # execute test against mocked response
     balance = wallet.balance
     assert balance == winston_to_ar(mock_balance)
-    with pytest.raises(ar.ArweaveException):
+    with pytest.raises(ar.ArweaveNetworkException):
         balance = wallet.balance
 
 
