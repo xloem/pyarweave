@@ -8,6 +8,7 @@ from Crypto.Random import get_random_bytes
 from .utils import b64dec, b64enc, b64dec_if_not_bytes, b64enc_if_not_str, encode_tag, decode_tag, normalize_tag, create_tag, tags_to_dict
 from .utils.deep_hash import deep_hash
 from .utils.ans104_signers import DEFAULT as DEFAULT_SIGNER, BY_TYPE as SIGNERS_BY_TYPE
+from . import logger
 
 ANS104_TAGS_AVRO_SCHEMA = {
   "type": "array",
@@ -93,6 +94,7 @@ class ANS104DataItemHeader:
         if isinstance(tags, (bytes, bytearray)):
             self.raw_tags = tags
         else:
+            self.raw_tags = b'\0'
             self.tags = tags
         self.raw_owner = b64dec_if_not_bytes(owner)
         self.raw_signature = b64dec_if_not_bytes(signature)
@@ -170,7 +172,17 @@ class ANS104DataItemHeader:
 
     @tags.setter
     def tags(self, tags):
-        self.raw_tags = self.tagstobytes(tags)
+        self.raw_tags = self.tagstobytes(tags) + self.extra_tags_data
+
+    @property
+    def extra_tags_data(self):
+        stream = io.BytesIO(self.raw_tags)
+        self.tagsfromstream(stream)
+        return stream.read()
+
+    @extra_tags_data.setter
+    def extra_tags_data(self, extra_tags_data):
+        self.raw_tags = self.raw_tags[-len(self.extra_tags_data):] + extra_tags_data
 
     def tojson(self):
         return {
@@ -297,9 +309,12 @@ class ANS104DataItemHeader:
             tags = cls.tagsfromstream(raw_tags_stream)
             offset += raw_tags_len
             if raw_tags_stream.tell() != raw_tags_len or len(tags) != tags_len:
-                raise Exception(f'incorrect tags length')
+                if raw_tags_stream.tell() < raw_tags_len:
+                    logger.warn('DataItem tags contains cruft data at end.')
+                else:
+                    raise Exception(f'incorrect tags length')
         else:
-            tags = b''
+            raw_tags = b''
 
         assert stream.tell() == offset + start_tell
 
