@@ -52,7 +52,7 @@ class PeerStream(io.RawIOBase):
             assert self.chunk.start_offset <= self.offset
             assert self.chunk.end_offset > self.offset
 
-        bytecount = min(len(b), self.chunk.end_offset - self.offset)
+        bytecount = min(len(b), self.chunk.end_offset - self.offset, self.end - self.offset)
         suboffset = self.offset - self.chunk.start_offset
         b[ : bytecount] = self.chunk.data[suboffset : suboffset + bytecount]
         self.seek(bytecount, io.SEEK_CUR)
