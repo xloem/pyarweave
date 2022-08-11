@@ -1,3 +1,4 @@
+from ar import ArweaveException
 from ar.peer import HTTPClient
 
 DEFAULT_API_URL = 'https://node2.bundlr.network'
@@ -54,6 +55,8 @@ class Node(HTTPClient):
         402: Not enough funds to send data
         '''
         response = self._post(transaction_bytes, 'tx', currency)
+        if response.status_code != 200:
+            raise ArweaveException(response.text)
         return response.json()
 
     def send_chunks(self, databytes, txid, offset, currency = DEFAULT_CHAIN):
