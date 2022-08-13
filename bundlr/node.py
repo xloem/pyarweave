@@ -58,7 +58,7 @@ class Node(HTTPClient):
         try:
             return response.json()
         except:
-            raise ArweaveException(response.text, response_status_code)
+            raise ArweaveException(response.text, response.status_code)
 
     def send_chunks(self, databytes, txid, offset, currency = DEFAULT_CHAIN):
         response = self._post(databytes, 'chunks', currency, txid, offset)
