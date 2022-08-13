@@ -1141,7 +1141,12 @@ def reupload(peer, tx):
 
     chunks = generate_transaction_chunks(stream)
     stream = peer.gateway_stream(tx)
-    if chunks['data_root'] != peer.tx_data_root(tx):
+    try:
+        tx_data_root = peer.tx_data_root(tx)
+    except:
+        from ar import Transaction
+        tx_data_root = Transaction(peer.unconfirmed_tx2(tx)).data_root
+    if chunks['data_root'] != tx_data_root:
         logger.error(f'{peer.api_url}: Data for {tx} mismatches generated root.')
         return False
     logger.warning(f'uhh trying to reupload {tx}')
