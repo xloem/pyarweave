@@ -1145,7 +1145,7 @@ def reupload(peer, tx):
         tx_data_root = peer.tx_data_root(tx)
     except:
         from ar import Transaction
-        tx_data_root = Transaction(peer.unconfirmed_tx2(tx)).data_root
+        tx_data_root = Transaction.frombytes(peer.unconfirmed_tx2(tx)).data_root
     if chunks['data_root'] != tx_data_root:
         logger.error(f'{peer.api_url}: Data for {tx} mismatches generated root.')
         return False
