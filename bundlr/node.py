@@ -1,4 +1,4 @@
-from ar import ArweaveException
+from ar import ArweaveNetworkException
 from ar.peer import HTTPClient
 
 DEFAULT_API_URL = 'https://node2.bundlr.network'
@@ -53,12 +53,13 @@ class Node(HTTPClient):
             "block": "<cutoff height by which tx must be mined in arweave>"
         }
         402: Not enough funds to send data
+        201: It looks like this can mean that a transaction is already received
         '''
         response = self._post(transaction_bytes, 'tx', currency)
         try:
             return response.json()
-        except:
-            raise ArweaveException(response.text, response.status_code)
+        except Exception as exc:
+            raise ArweaveNetworkException(response.text, response.status_code, exc, response)
 
     def send_chunks(self, databytes, txid, offset, currency = DEFAULT_CHAIN):
         response = self._post(databytes, 'chunks', currency, txid, offset)
