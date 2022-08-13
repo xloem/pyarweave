@@ -21,8 +21,8 @@ class Node(HTTPClient):
             "balance": "<balance>"
         }
         '''
-        response = self._get('account', 'balance', currency, '?address=' + address)
-        return response.json()
+        response = self._get_json('account', 'balance', currency, '?address=' + address)
+        return response
 
     def info(self):
         '''
@@ -34,8 +34,8 @@ class Node(HTTPClient):
             "gateway": "<arweave api host>",
         }
         '''
-        response = self._get('info')
-        return response.json()
+        response = self._get_json('info')
+        return response
 
     def price(self, bytes, currency = DEFAULT_CHAIN):
         '''Calculates the price for [bytes] bytes paid for with [currency] for the loaded bundlr node.'''
@@ -57,15 +57,18 @@ class Node(HTTPClient):
         response = self._post(transaction_bytes, 'tx', currency)
         if response.status_code != 200:
             raise ArweaveException(response.text)
-        return response.json()
+        try:
+            return response.json()
+        except:
+            raise ArweaveException(response.text)
 
     def send_chunks(self, databytes, txid, offset, currency = DEFAULT_CHAIN):
         response = self._post(databytes, 'chunks', currency, txid, offset)
         return response.text # unsure
 
     def chunks(self, txid, size, currency = DEFAULT_CHAIN):
-        response = self._get('chunks', currency, txid, size)
-        return response.json()
+        response = self._get_json('chunks', currency, txid, size)
+        return response
 
     def send_chunks_finished(self, txid, currency = DEFAULT_CHAIN):
         response = self._post(None, 'chunks', currency, txid, '-1')
