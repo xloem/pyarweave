@@ -6,7 +6,8 @@ class PeerStream(io.RawIOBase):
         try:
             tx_offset = peer.tx_offset(txid)
         except ar.ArweaveNetworkException:
-            tx_offset = peer.tx(txid)['offset']
+            import ar.Transaction
+            tx_offset = ar.Transaction.frombytes(peer.unconfirmed_tx2(txid)).offset
 
         stream_last = tx_offset['offset']
         stream_size = tx_offset['size']
