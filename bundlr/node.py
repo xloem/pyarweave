@@ -55,12 +55,10 @@ class Node(HTTPClient):
         402: Not enough funds to send data
         '''
         response = self._post(transaction_bytes, 'tx', currency)
-        if response.status_code != 200:
-            raise ArweaveException(response.text)
         try:
             return response.json()
         except:
-            raise ArweaveException(response.text)
+            raise ArweaveException(response.text, response_status_code)
 
     def send_chunks(self, databytes, txid, offset, currency = DEFAULT_CHAIN):
         response = self._post(databytes, 'chunks', currency, txid, offset)
