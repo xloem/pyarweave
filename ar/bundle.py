@@ -467,7 +467,7 @@ class DataItem:
         for tag in tags:
             if tag['name'] == b'Bundle-Format':
                 fmt = tag['value']
-        print(fmt)
+        #print(fmt)
         if fmt == b'json':
             yield from Bundle.fromjson(json.load(stream)).dataitems
         elif fmt == b'binary':
