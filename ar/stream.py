@@ -3,11 +3,12 @@ import io, ar
 class PeerStream(io.RawIOBase):
     @classmethod
     def from_txid(cls, peer, txid, offset = 0, length = None):
-        try:
-            tx_offset = peer.tx_offset(txid)
-        except ar.ArweaveNetworkException:
-            import ar.Transaction
-            tx_offset = ar.Transaction.frombytes(peer.unconfirmed_tx2(txid)).offset
+        #try:
+        #    tx_offset = peer.tx_offset(txid)
+        #except ar.ArweaveNetworkException:
+        #    # commented out because i'm not sure how to get unconfirmed chunks
+        #    tx_offset = ar.Transaction.frombytes(peer.unconfirmed_tx2(txid)).offset
+        tx_offset = peer.tx_offset(txid)
 
         stream_last = tx_offset['offset']
         stream_size = tx_offset['size']
