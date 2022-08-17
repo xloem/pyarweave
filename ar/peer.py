@@ -1034,10 +1034,7 @@ class Peer(HTTPClient):
         try:
             return self.peer_stream(txid, range=range)
         except Exception:
-            if reupload(self, txid):
-                return self.gateway_stream(txid, range=range)
-            else:
-                raise
+            return reupload(self, txid, range=range) # now reupload would be changed to stream to a file and return a handle to that file that deletes it when closed. makes faster
 
     def gateway_stream(self, txid, ext ='', range = None):
         if range is not None:
@@ -1137,21 +1134,26 @@ class Peer(HTTPClient):
 
 from ar.utils.merkle import compute_root_hash, generate_transaction_chunks
 from ar.utils import b64enc
-def reupload(peer, tx):
-    stream = peer.gateway_stream(tx)
+import tempfile, shutil
+def reupload(peer, tx, range=None):
+    stream = tempfile.SpooledTemporaryFile()
+    with peer.gateway_stream(tx) as network_data:
+        shutil.copyfileobj(network_data, stream)
 
+    stream.seek(0)
     chunks = generate_transaction_chunks(stream)
-    stream = peer.gateway_stream(tx)
     try:
         tx_data_root = peer.tx_data_root(tx)
+        logger.warning(f'uhh trying to reupload {tx}')
     except:
         from ar import Transaction
         tx_data_root = Transaction.frombytes(peer.unconfirmed_tx2(tx)).data_root
+        logger.info(f'{tx} not confirmed yet, got the data from gateway and am ensuring another node has it')
     if chunks['data_root'] != tx_data_root:
         logger.error(f'{peer.api_url}: Data for {tx} mismatches generated root.')
         return False
-    logger.warning(f'uhh trying to reupload {tx}')
     offset = 0
+    stream.seek(0)
     for proof, chunk in zip(chunks['proofs'], chunks['chunks']):
         chunk_size = chunk.data_size
         chunk = {
@@ -1163,4 +1165,11 @@ def reupload(peer, tx):
         }
         peer.send_chunk(chunk)
         offset+=chunk_size
-    return True
+    stream.seek(0)
+    if range is not None:
+        ranged_stream = tempfile.SpooledTemporaryFile()
+        stream.seek(range[0])
+        ranged_stream.write(stream.read(range[1]-range[0]))
+        return ranged_stream
+    else:
+        return stream
