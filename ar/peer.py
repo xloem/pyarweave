@@ -1,3 +1,8 @@
+
+from . import DEFAULT_API_URL, DEFAULT_REQUESTS_PER_MINUTE_LIMIT, logger, ArweaveException, ArweaveNetworkException
+from .stream import PeerStream, GatewayStream
+from .utils import b64dec, arbindec
+
 import io
 import threading
 import time
@@ -5,10 +10,6 @@ import time
 import erlang
 import json
 import requests
-
-from . import DEFAULT_API_URL, DEFAULT_REQUESTS_PER_MINUTE_LIMIT, logger, ArweaveException, ArweaveNetworkException
-from .stream import PeerStream, GatewayStream
-from .utils import b64dec, arbindec
 
 def binary_to_term(b):
     # arweave.live seems to replace nonascii chars with this sequence :/

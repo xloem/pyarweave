@@ -14,6 +14,8 @@
 
 import logging
 
+logger = logging.getLogger(__name__)
+
 PUBLIC_GATEWAYS = [
     'https://arweave.net',
     'https://arweave.live',
@@ -116,8 +118,6 @@ NOTE_SIZE = 32
 PACKING_THRESHOLD_CHUNKS_PER_SECOND = 10
 
 PADDING_NODE_DATA_ROOT = b''
-
-logger = logging.getLogger(__name__)
 
 class ArweaveException(Exception):
     pass

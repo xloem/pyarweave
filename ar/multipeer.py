@@ -52,7 +52,7 @@ class IntervalVector:
         high = self.high if high is None else high
 
         # lowest interval_such that high >= low 
-        idx = bisect.bisect_left(self.ranges, low, key=self.key_high, lo=lo_bound, hi=hi_bound)
+        idx = bisect.bisect_left([self.key_high(range) for range in self.ranges], low, lo=lo_bound, hi=hi_bound)
         while idx < len(self.ranges) and low <= high:
             idx_low, idx_high, _ = self.ranges[idx]
             if idx_low > low:
@@ -69,7 +69,7 @@ class IntervalVector:
         high = self.high if high is None else high
 
         # highest interval_such that low <= high
-        idx = bisect.bisect_right(self.ranges, high, key=self.key_low, lo=max(lo_bound, first), hi=hi_bound) - 1
+        idx = bisect.bisect_right([self.key_low(range) for range in self.ranges], high, lo=max(lo_bound, first), hi=hi_bound) - 1
         while idx >= 0 and high >= low:
             idx_low, idx_high, _ = self.ranges[idx]
             if idx_high < high:
@@ -83,9 +83,9 @@ class IntervalVector:
         
     def range(self, low, high, lo_bound=0, hi_bound=None):
         # lowest interval_high >= low 
-        first = bisect.bisect_left(self.ranges, low, key=self.key_high, lo=lo_bound, hi=hi_bound)
+        first = bisect.bisect_left([self.key_high(range) for range in self.ranges], low, lo=lo_bound, hi=hi_bound)
         # highest interval_low <= high
-        last = bisect.bisect_right(self.ranges, high, key=self.key_low, lo=max(lo_bound, first), hi=hi_bound) - 1
+        last = bisect.bisect_right([self.key_low(range) for range in self.ranges], high, lo=max(lo_bound, first), hi=hi_bound) - 1
 
         portion = self.ranges[first:last+1]
         if len(portion):
@@ -101,7 +101,7 @@ class IntervalVector:
         # this could probably be simplified by copying range()'s approach
 
         # select highest left_idx such that left_idx low < low
-        left_idx = bisect.bisect_left(self.ranges, low, key=self.key_low, lo=lo_bound, hi=hi_bound) - 1
+        left_idx = bisect.bisect_left([self.key_low(range) for range in self.ranges], low, lo=lo_bound, hi=hi_bound) - 1
         left_add = ()
         if left_idx < 0:
             replace_low = 0
@@ -118,7 +118,7 @@ class IntervalVector:
                 replace_low = left_idx + 1
 
         # select lowest right_idx such that right_idx high > high
-        right_idx = bisect.bisect_right(self.ranges, high, key=self.key_high, lo=max(lo_bound,left_idx), hi=hi_bound)
+        right_idx = bisect.bisect_right([self.key_high(range) for range in self.ranges], high, lo=max(lo_bound,left_idx), hi=hi_bound)
         right_add = ()
         if right_idx == len(self.ranges):
             replace_high = right_idx
@@ -243,7 +243,7 @@ def test_usv_set_range():
 
 class ContentTrackedPeer(Peer):
     def __init__(self, *params, **kwparams):
-        super().__init__(*params, backoff=None, **kwparams)
+        super().__init__(*params, **kwparams)
         self.chunks = IntervalVector()
         #self.chunks_held = IntervalVector()
 
@@ -311,7 +311,7 @@ class MultiPeer:
             start_time = time.time()
             while True:
                 while not len(self.peer_queue):
-                    if time.time() - start_time >= timeout:
+                    if timeout is not None and time.time() - start_time >= timeout:
                         self.backup_peer_queue.add(peer_addr)
                         self.backup_peer_queue.update(uninteresting_peers)
                         raise TimeoutError()
@@ -430,7 +430,7 @@ class MultiPeer:
 
 if __name__ == '__main__':
     import logging
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(level=logging.DEBUG)
     test_usv_range()
     test_usv_set_range()
     import ar.multipeer
