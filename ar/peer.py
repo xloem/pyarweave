@@ -165,7 +165,12 @@ class HTTPClient:
                     self._ratelimit_epilogue(False)
                     self.on_too_many_requests()
                     continue
-                logger.error('{}\n{}\n\n{}'.format(exc, text, request_kwparams))
+                if type(exc) is requests.ReadTimeout:
+                    if status_code == 0:
+                        status_code = 598
+                    logger.info('{}\n{}\n\n{}'.format(exc, text, request_kwparams))
+                else:
+                    logger.error('{}\n{}\n\n{}'.format(exc, text, request_kwparams))
                 if status_code == 520:
                     # cloudfront broke
                     self._ratelimit_epilogue(True)
