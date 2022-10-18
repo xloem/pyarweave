@@ -22,7 +22,7 @@ def test_winston_to_ar():
     }
 
     ar = winston_to_ar(fee['winston'])
-    assert ar == float(fee['ar'])
+    assert float(ar) == float(fee['ar'])
 
 
 def test_ar_to_winston():

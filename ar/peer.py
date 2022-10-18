@@ -1,3 +1,8 @@
+
+from . import DEFAULT_API_URL, DEFAULT_REQUESTS_PER_MINUTE_LIMIT, logger, ArweaveException, ArweaveNetworkException
+from .stream import PeerStream, GatewayStream
+from .utils import b64dec, arbindec
+
 import io
 import threading
 import time
@@ -5,10 +10,6 @@ import time
 import erlang
 import json
 import requests
-
-from . import DEFAULT_API_URL, DEFAULT_REQUESTS_PER_MINUTE_LIMIT, logger, ArweaveException, ArweaveNetworkException
-from .stream import PeerStream, GatewayStream
-from .utils import b64dec, arbindec
 
 def binary_to_term(b):
     # arweave.live seems to replace nonascii chars with this sequence :/
@@ -163,7 +164,12 @@ class HTTPClient:
                     self._ratelimit_epilogue(False)
                     self.on_too_many_requests()
                     continue
-                logger.error('{}\n{}\n\n{}'.format(exc, text, request_kwparams))
+                if type(exc) is requests.ReadTimeout:
+                    if status_code == 0:
+                        status_code = 598
+                    logger.info('{}\n{}\n\n{}'.format(exc, text, request_kwparams))
+                else:
+                    logger.error('{}\n{}\n\n{}'.format(exc, text, request_kwparams))
                 if status_code == 520:
                     # cloudfront broke
                     self._ratelimit_epilogue(True)
@@ -181,6 +187,13 @@ class HTTPClient:
     def _get(self, *params, **request_kwparams):
         return self._request(*params, **{'method': 'GET', **request_kwparams})
 
+    def _get_json(self, *params, **request_kwparams):
+        response = self._get(*params, **request_kwparams)
+        try:
+            return response.json()
+        except:
+            raise ArweaveException(response.text)
+
     def _post(self, data, *params, headers = {}, **request_kwparams):
         headers = {**headers}
 
@@ -195,6 +208,13 @@ class HTTPClient:
             data_key = 'data'
 
         return self._request(*params, **{'method': 'POST', 'headers': headers, **{data_key: data}, **request_kwparams})
+
+    def _post_json(self, data, *params, **request_kwparams):
+        response = self._post(data, *params, **request_kwparams)
+        try:
+            return response.json()
+        except json.decoder.JSONDecodeError:
+            raise ArweaveException(response.text)
 
     def on_network_exception(self, text, code, exception, response):
         raise ArweaveNetworkException(text, code, exception, response)
@@ -233,8 +253,8 @@ class Peer(HTTPClient):
           "node_state_latency": 18
         }
         '''
-        response = self._get('info')
-        return response.json()
+        response = self._get_json('info')
+        return response
 
     def probe(self):
         features = []
@@ -345,13 +365,13 @@ class Peer(HTTPClient):
 
     def tx_pending(self):
         '''Return all mempool transactions.'''
-        response = self._get('tx/pending')
-        return response.json()
+        response = self._get_json('tx/pending')
+        return response
 
     def queue(self):
         '''Return outgoing transaction priority queue.'''
-        response = self._get('queue')
-        return response.json()
+        response = self._get_json('queue')
+        return response
 
     def tx_status(self, hash):
         '''
@@ -363,17 +383,13 @@ class Peer(HTTPClient):
             "number_of_confirmations": "<NumberOfConfirmations>",
         }
         '''
-        response = self._get('tx', txid, 'status')
-        return response.json()
+        response = self._get_json('tx', txid, 'status')
+        return response
 
     def tx(self, txid):
         '''Return a JSON-encoded transaction.'''
-        response = self._get('tx', txid)
-        try:
-            tx = response.json()
-        except json.decoder.JSONDecodeError:
-            # could handle this better, a status string like 'Pending'
-            return response.text
+        response = self._get_json('tx', txid)
+        tx = response
         for tag in tx['tags']:
             for key in tag:
                 tag[key] = b64dec(tag[key].encode())
@@ -391,8 +407,8 @@ class Peer(HTTPClient):
 
     def unconfirmed_tx(self, txid):
         '''Return a possibly unconfirmed JSON-encoded transaction.'''
-        response = self._get('unconfirmed_tx', txid)
-        tx = response.json()
+        response = self._get_json('unconfirmed_tx', txid)
+        tx = response
         for tag in tx['tags']:
             for key in tag:
                 tag[key] = b64dec(tag[key].encode())
@@ -438,8 +454,8 @@ class Peer(HTTPClient):
             }
         }
         '''
-        response = self._post(logical_expression, 'arql')
-        return response.json()
+        response = self._post_json(logical_expression, 'arql')
+        return response
 
     def tx_data_html(self, txid):
         '''
@@ -519,8 +535,8 @@ class Peer(HTTPClient):
         if bucket_based_offset:
             headers['x-bucket-based-offset'] = '1'
 
-        response = self._get('chunk', str(offset), headers=headers)
-        return response.json()
+        response = self._get_json('chunk', str(offset), headers=headers)
+        return response
 
     def chunk2(self, offset, packing = 'unpacked', bucket_based_offset = False):
         '''
@@ -567,8 +583,8 @@ class Peer(HTTPClient):
             "size": <total size of tx data>
         }
         '''
-        response = self._get('tx', hash, 'offset')
-        result = response.json()
+        response = self._get_json('tx', hash, 'offset')
+        result = response
         result['offset'] = int(result['offset'])
         result['size'] = int(result['size'])
         return result
@@ -606,8 +622,8 @@ class Peer(HTTPClient):
         412: no previous block
         208: already processing the block
         '''
-        response = self._post(block_announcement, 'block_announcement')
-        return response.json()
+        response = self._post_json(block_announcement, 'block_announcement')
+        return response
 
     def send_block(self, block, arweave_recall_byte : int = None):
         '''Accept a JSON-encoded block with Base64Url encoded fields.'''
@@ -636,8 +652,8 @@ class Peer(HTTPClient):
             "wallet_access_code": <WalletAccessCode>
         }
         '''
-        response = self._post(secret, 'wallet')
-        return response.json()
+        response = self._post_json(secret, 'wallet')
+        return response
 
     def send_tx(self, json_data):
         '''
@@ -662,8 +678,8 @@ class Peer(HTTPClient):
         Requires internal_api_secret startup option to be set.
         WARNING: only use it if you really really know what you are doing.
         '''
-        response = self._post(secret, 'unsigned_tx')
-        return response.json()
+        response = self._post_json(secret, 'unsigned_tx')
+        return response
 
     def peers(self):
         '''
@@ -672,8 +688,8 @@ class Peer(HTTPClient):
         Nodes can only respond with peers they currently know about, so
         this will not be an exhaustive or complete list of nodes on the network.
         '''
-        response = self._get('peers')
-        return response.json()
+        response = self._get_json('peers')
+        return response
 
     def price(self, bytes=0, target_address=None):
         '''Return the estimated transaction fee not including a new wallet fee.
@@ -707,10 +723,10 @@ class Peer(HTTPClient):
         if as_hash_list:
             kwparams['headers'] = {'x-block-format': '2'}
         if from_height is not None or to_height is not None:
-            response = self._get('hash_list', str(from_height), str(to_height), **kwparams)
+            response = self._get_json('hash_list', str(from_height), str(to_height), **kwparams)
         else:
-            response = self._get('hash_list', **kwparams)
-        return response.json()
+            response = self._get_json('hash_list', **kwparams)
+        return response
 
     def block_index(self, from_height = None, to_height = None, as_hash_list = False):
         '''Return the current JSON-encoded hash list held by the node.'''
@@ -718,10 +734,10 @@ class Peer(HTTPClient):
         if as_hash_list:
             kwparams['headers'] = {'x-block-format': '2'}
         if from_height is not None or to_height is not None:
-            response = self._get('block_index', str(from_height), str(to_height), **kwparams)
+            response = self._get_json('block_index', str(from_height), str(to_height), **kwparams)
         else:
-            response = self._get('block_index', **kwparams)
-        return response.json()
+            response = self._get_json('block_index', **kwparams)
+        return response
     
     def block_index2(self):
         '''Return the current binary-encoded block index held by the node.'''
@@ -729,8 +745,8 @@ class Peer(HTTPClient):
         return response.content
 
     def recent_hash_list(self):
-        response = self._get('recent_hash_list')
-        return response.json()
+        response = self._get_json('recent_hash_list')
+        return response
 
     def recent_hash_list_diff(self, hash_list_binary):
         '''
@@ -739,8 +755,8 @@ class Peer(HTTPClient):
         Peers may use this endpoint to make sure they did not miss blocks or learn
         about the missed blocks and their transactions so that they can catch up quickly.
         '''
-        response = self._post(hash_list_binary, 'recent_hash_list_diff', method='GET')
-        return response.json()
+        response = self._post_json(hash_list_binary, 'recent_hash_list_diff', method='GET')
+        return response
 
     def wallet_list(self, encoded_root_hash = None, encoded_cursor = None, wallet_list_chunk_size = None):
         '''
@@ -756,10 +772,10 @@ class Peer(HTTPClient):
         if encoded_cursor is not None:
             response = self._get('wallet_list', encoded_root_hash, encoded_cursor, wallet_list_chunk_size)
         if encoded_root_hash is not None:
-            response = self._get('wallet_list', encoded_root_hash, wallet_list_chunk_size)
+            response = self._get_json('wallet_list', encoded_root_hash, wallet_list_chunk_size)
         else:
-            response = self._get('wallet_list')
-        return response.json()
+            response = self._get_json('wallet_list')
+        return response
 
     def wallet_list_balance(self, encoded_root_hash, encoded_addr):
         '''Return the balance of the given address from the wallet tree with the given root hash.'''
@@ -801,10 +817,10 @@ class Peer(HTTPClient):
         for the wallet specified via wallet_address.
         '''
         if earliest_tx is not None:
-            response = self._get('wallet', wallet_address, 'txs', earliest_tx)
+            response = self._get_json('wallet', wallet_address, 'txs', earliest_tx)
         else:
-            response = self._get('wallet', wallet_address, 'txs')
-        return response.json()
+            response = self._get_json('wallet', wallet_address, 'txs')
+        return response
 
     def wallet_deposits(self, wallet_address, earliest_deposit = None):
         '''
@@ -812,10 +828,10 @@ class Peer(HTTPClient):
         wallet_address, optionally starting from the earliest_deposit.
         '''
         if earliest_deposit is not None:
-            response = self._get('wallet', wallet_address, 'deposits', earliest_deposit)
+            response = self._get_json('wallet', wallet_address, 'deposits', earliest_deposit)
         else:
-            response = self._get('wallet', wallet_address, 'deposits')
-        return response.json()
+            response = self._get_json('wallet', wallet_address, 'deposits')
+        return response
 
     def block_hash(self, hash, field = None):
         '''
@@ -850,10 +866,10 @@ class Peer(HTTPClient):
         }
         '''
         if field is not None:
-            response = self._get('block/hash', hash, field)
+            response = self._get_json('block/hash', hash, field)
         else:
-            response = self._get('block/hash', hash)
-        return response.json()
+            response = self._get_json('block/hash', hash)
+        return response
 
     def block_height(self, height, field = None):
         '''
@@ -863,10 +879,10 @@ class Peer(HTTPClient):
         indep_hash | txs | hash_list | wallet_list | reward_addr | tags | reward_pool
         '''
         if field is not None:
-            response = self._get('block/height', str(height), field)
+            response = self._get_json('block/height', str(height), field)
         else:
-            response = self._get('block/height', str(height))
-        return response.json()
+            response = self._get_json('block/height', str(height))
+        return response
 
     def block2_hash(self, hash, encoded_transaction_indices = None):
         '''
@@ -904,13 +920,13 @@ class Peer(HTTPClient):
 
     def block_current(self):
         '''Return the current block.'''
-        response = self._get('block/current')
-        return response.json()
+        response = self._get_json('block/current')
+        return response
 
     def current_block(self):
         '''Deprecated for block_current() 12/07/2018'''
-        response = self._get('current_block')
-        return response.json()
+        response = self._get_json('current_block')
+        return response
 
     def block(self, height_or_hash):
         '''A convenience method that hands off to block_height or block_hash.'''
@@ -941,18 +957,11 @@ class Peer(HTTPClient):
             response = self._get('tx', hash, 'data.')
             return response.content
         else:
-            response = self._get('tx', hash, field)
-            if field == 'tags':
-                tags = response.json()
-                for tag in tags:
-                    for key in tag:
-                        tag[key] = b64dec(tag[key].encode())
-                return tags
-            else:
-                try:
-                    return response.json()
-                except json.decoder.JSONDecodeError:
-                    return response.text
+            response = self._get_json('tx', hash, field)
+            for tag in response:
+                for key in tag:
+                    tag[key] = b64dec(tag[key].encode())
+            return response
 
     def tx_id(self, hash):
         '''Return transaction id.'''
@@ -1029,10 +1038,7 @@ class Peer(HTTPClient):
         try:
             return self.peer_stream(txid, range=range)
         except Exception:
-            if reupload(self, txid):
-                return self.gateway_stream(txid, range=range)
-            else:
-                raise
+            return reupload(self, txid, range=range) # now reupload would be changed to stream to a file and return a handle to that file that deletes it when closed. makes faster
 
     def gateway_stream(self, txid, ext ='', range = None):
         if range is not None:
@@ -1049,12 +1055,12 @@ class Peer(HTTPClient):
     # below are used with https://github.com/ar-io/arweave-gateway
 
     def graphql(self, query):
-        response = self._post({
+        response = self._post_json({
             'operationName': None,
             'query': query,
             'variables': {}
         }, 'graphql')
-        return response.json()
+        return response
 
     def health(self):
         '''
@@ -1074,8 +1080,8 @@ class Peer(HTTPClient):
             }
         }
         '''
-        response = self._get('health')
-        return response.json()
+        response = self._get_json('health')
+        return response
         
 
     # below are used with https://github.com/everFinance/arseeding
@@ -1104,8 +1110,8 @@ class Peer(HTTPClient):
 
     def job(self, txid, type):
         '''Get the status of a job.'''
-        response = self._get('job', txid, type)
-        return response.json()
+        response = self._get_json('job', txid, type)
+        return response
 
     def job_broadcast(self, txid):
         '''Get the status of a broadcast job.
@@ -1127,21 +1133,31 @@ class Peer(HTTPClient):
         return self.job(txid, 'sync')
 
     def cache_jobs(self):
-        response = self._get('cache', 'jobs')
-        return response.json()
+        response = self._get_json('cache', 'jobs')
+        return response
 
 from ar.utils.merkle import compute_root_hash, generate_transaction_chunks
 from ar.utils import b64enc
-def reupload(peer, tx):
-    stream = peer.gateway_stream(tx)
+import tempfile, shutil
+def reupload(peer, tx, range=None):
+    stream = tempfile.SpooledTemporaryFile()
+    with peer.gateway_stream(tx) as network_data:
+        shutil.copyfileobj(network_data, stream)
 
+    stream.seek(0)
     chunks = generate_transaction_chunks(stream)
-    stream = peer.gateway_stream(tx)
-    if chunks['data_root'] != peer.tx_data_root(tx):
+    try:
+        tx_data_root = peer.tx_data_root(tx)
+        logger.warning(f'uhh trying to reupload {tx}')
+    except:
+        from ar import Transaction
+        tx_data_root = Transaction.frombytes(peer.unconfirmed_tx2(tx)).data_root
+        logger.info(f'{tx} not confirmed yet, got the data from gateway and am ensuring another node has it')
+    if chunks['data_root'] != tx_data_root:
         logger.error(f'{peer.api_url}: Data for {tx} mismatches generated root.')
         return False
-    logger.warning(f'uhh trying to reupload {tx}')
     offset = 0
+    stream.seek(0)
     for proof, chunk in zip(chunks['proofs'], chunks['chunks']):
         chunk_size = chunk.data_size
         chunk = {
@@ -1153,4 +1169,11 @@ def reupload(peer, tx):
         }
         peer.send_chunk(chunk)
         offset+=chunk_size
-    return True
+    stream.seek(0)
+    if range is not None:
+        ranged_stream = tempfile.SpooledTemporaryFile()
+        stream.seek(range[0])
+        ranged_stream.write(stream.read(range[1]-range[0]))
+        return ranged_stream
+    else:
+        return stream

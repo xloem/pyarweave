@@ -33,11 +33,12 @@ class Wallet(object):
 
     @classmethod
     def generate(cls, bits = 4096, jwk_file = None):
-        key = RSA.generate(4096)
+        assert bits == 4096 # i'm not sure whether arweave is intended to handle non-4096-bit keys   2022-07-06
+        key = RSA.generate(bits)
         jwk_data = jwk.RSAKey(key.export_key(), jwk.ALGORITHMS.RS256).to_dict()
         if jwk_file is not None:
             with open(jwk_file, 'xt') as jwk_fh:
-                json.dump(jwk_data, fh)
+                json.dump(jwk_data, jwk_fh)
         return cls(jwk_file = jwk_file, jwk_data = jwk_data)
 
     @classmethod
@@ -65,8 +66,10 @@ class Wallet(object):
         signed_data = PKCS1_PSS.new(self.rsa).sign(h)
         return signed_data
 
-    def verify(self):
-        pass
+    def verify(self, message, signed_data):
+        h = SHA256.new(message)
+        status = PKCS1_PSS.new(self.rsa).verify(h, signed_data)
+        return status
 
     def get_last_transaction_id(self):
         self.last_tx = self.peer.tx_anchor()

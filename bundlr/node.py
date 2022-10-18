@@ -1,3 +1,4 @@
+from ar import ArweaveNetworkException
 from ar.peer import HTTPClient
 
 DEFAULT_API_URL = 'https://node2.bundlr.network'
@@ -20,8 +21,8 @@ class Node(HTTPClient):
             "balance": "<balance>"
         }
         '''
-        response = self._get('account', 'balance', currency, '?address=' + address)
-        return response.json()
+        response = self._get_json('account', 'balance', currency, '?address=' + address)
+        return response
 
     def info(self):
         '''
@@ -33,8 +34,8 @@ class Node(HTTPClient):
             "gateway": "<arweave api host>",
         }
         '''
-        response = self._get('info')
-        return response.json()
+        response = self._get_json('info')
+        return response
 
     def price(self, bytes, currency = DEFAULT_CHAIN):
         '''Calculates the price for [bytes] bytes paid for with [currency] for the loaded bundlr node.'''
@@ -52,17 +53,21 @@ class Node(HTTPClient):
             "block": "<cutoff height by which tx must be mined in arweave>"
         }
         402: Not enough funds to send data
+        201: It looks like this can mean that a transaction is already received
         '''
         response = self._post(transaction_bytes, 'tx', currency)
-        return response.json()
+        try:
+            return response.json()
+        except Exception as exc:
+            raise ArweaveNetworkException(response.text, response.status_code, exc, response)
 
     def send_chunks(self, databytes, txid, offset, currency = DEFAULT_CHAIN):
         response = self._post(databytes, 'chunks', currency, txid, offset)
         return response.text # unsure
 
     def chunks(self, txid, size, currency = DEFAULT_CHAIN):
-        response = self._get('chunks', currency, txid, size)
-        return response.json()
+        response = self._get_json('chunks', currency, txid, size)
+        return response
 
     def send_chunks_finished(self, txid, currency = DEFAULT_CHAIN):
         response = self._post(None, 'chunks', currency, txid, '-1')

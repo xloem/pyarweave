@@ -267,7 +267,7 @@ def chunk_data(file_handler):
 def compute_root_hash(file_handler):
     root_node = generate_tree(file_handler)
 
-    return root_node.id
+    return root_node.id_raw
 
 
 def generate_leaves(chunks):

@@ -12,12 +12,13 @@ from .utils import (
     b64enc, b64dec,
     arbinenc, arbindec,
     arintenc, arintdec,
+    utf8dec_if_bytes
 )
 from .peer import Peer
 from .wallet import Wallet
 from .utils.deep_hash import deep_hash
 from .utils.merkle import compute_root_hash, generate_transaction_chunks
-from . import logger
+from . import logger, ArweaveException
 
 class Transaction(object):
     def __init__(self, wallet, **kwargs):
@@ -134,7 +135,7 @@ class Transaction(object):
             wallet = wallet,
             target = b64enc(target_raw),
             quantity = winston_to_ar(quantity),
-            reward = winston_to_ar(reward),
+            reward = str(reward),
             data = data_raw,
         )
         tx.data_size = data_size
@@ -150,11 +151,11 @@ class Transaction(object):
             arbinenc(b64dec(self.last_tx), 8),
             arbinenc(b64dec(self.owner), 16),
             arbinenc(b64dec(self.target), 8),
-            arintenc(int(ar_to_winston(self.quantity)), 8),
+            arintenc(int(self.quantity), 8),
             arintenc(self.data_size, 16),
             arbinenc(b64dec(self.data_root), 8),
             arbinenc(b64dec(self.signature), 16),
-            arintenc(int(ar_to_winston(self.reward)), 8),
+            arintenc(int(self.reward), 8),
             arbinenc(b64dec(self.data), 24),
             
             len(self.tags).to_bytes(2, 'big'),
@@ -184,7 +185,7 @@ class Transaction(object):
 
     def get_reward(self, data_size, target_address=None):
         reward = self.peer.price(data_size, target_address)
-        return winston_to_ar(reward)
+        return str(reward)
 
     def add_tag(self, name, value):
         tag = create_tag(name, value, self.format == 2)
@@ -210,7 +211,7 @@ class Transaction(object):
             self.id = self.id.decode()
 
     def get_signature_data(self):
-        self.reward = str(self.get_reward(self.data_size, target_address=self.target if len(self.target) > 0 else None))
+        self.reward = self.get_reward(self.data_size, target_address=self.target if len(self.target) > 0 else None)
 
         if int(self.data_size) > 0 and self.data_root == '' and not self.uses_uploader:
             if type(self.data) == str:
@@ -259,12 +260,7 @@ class Transaction(object):
         return signature_data
 
     def send(self):
-        try:
-            self.peer.send_tx(self.json_data)
-        except ArweaveException:
-            pass
-
-        return self.last_tx
+        return self.peer.send_tx(self.json_data)
 
     def to_dict(self):
 
@@ -273,7 +269,7 @@ class Transaction(object):
 
         data = {
             'data': utf8dec_if_bytes(self.data),
-            'id': utf8dec_if_bytes(self.itd),
+            'id': utf8dec_if_bytes(self.id),
             'last_tx': self.last_tx,
             'owner': self.owner,
             'quantity': self.quantity,
@@ -288,7 +284,7 @@ class Transaction(object):
             data['tags'] = self.tags
             data['format'] = 2
             if len(self.data_root) > 0:
-                data['data_root'] = utf8dec_if_bytes(self.data)
+                data['data_root'] = utf8dec_if_bytes(self.data_root)
             else:
                 data['data_root'] = ''
             data['data_size'] = str(self.data_size)
@@ -339,7 +335,7 @@ class Transaction(object):
         self.signature = json_data.get('signature', '')
         self.tags = [decode_tag(tag) for tag in json_data.get('tags', [])]
         self.target = json_data.get('target', '')
-        self.data_size = json_data.get('data_size', '0')
+        self.data_size = int(json_data.get('data_size', '0'))
         self.data_root = json_data.get('data_root', '')
         self.data_tree = json_data.get('data_tree', [])
 
