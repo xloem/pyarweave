@@ -27,7 +27,7 @@ class HTTPClient:
         self.requests_per_period = requests_per_period
         self.ratelimited_requests = 0
         self.period_sec = period_sec
-        self.incoming_port = incoming_port
+        #self.incoming_port = incoming_port
         self.extra_headers = extra_headers
         max_retries = requests.adapters.Retry(total=retries, backoff_factor=0.1, status_forcelist=[500,502,503,504]) # from so
         adapter = requests.adapters.HTTPAdapter(
@@ -369,7 +369,11 @@ class Peer(HTTPClient):
     def tx(self, txid):
         '''Return a JSON-encoded transaction.'''
         response = self._get('tx', txid)
-        tx = response.json()
+        try:
+            tx = response.json()
+        except json.decoder.JSONDecodeError:
+            # could handle this better, a status string like 'Pending'
+            return response.text
         for tag in tx['tags']:
             for key in tag:
                 tag[key] = b64dec(tag[key].encode())

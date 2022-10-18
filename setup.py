@@ -34,7 +34,7 @@ setup(
     'pycryptodome', # core crypto backend
     'requests', # core network backend
     'erlang_py', # for decoding some rare binary peer data
-    #'pyrx', # for block validation, could be made optional if there is a trusted node
+    #'git+https://github.com/jtgrassie/pyrx', # for block validation, could be made optional if there is a trusted node
     # note: pyrx is only available via git url; RandomX is on pypi
   ],
 )
