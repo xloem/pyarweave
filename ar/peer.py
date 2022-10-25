@@ -30,6 +30,7 @@ class HTTPClient:
         self.period_sec = period_sec
         #self.incoming_port = incoming_port
         self.extra_headers = extra_headers
+        self.req_history = []
         max_retries = requests.adapters.Retry(total=retries, backoff_factor=0.1, status_forcelist=[500,502,503,504]) # from so
         adapter = requests.adapters.HTTPAdapter(
             pool_connections = outgoing_connections,
