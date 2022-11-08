@@ -165,6 +165,9 @@ class HTTPClient:
                     self._ratelimit_epilogue(False)
                     self.on_too_many_requests()
                     continue
+                if type(exc) is requests.ConnectionError and len(exc.args) > 0 and type(exc.args[0]) is requests.urllib3.exceptions.ClosedPoolError:
+                    # strange ClosedPoolError from urllib3 race condition? https://github.com/urllib3/urllib3/issues/951
+                    continue
                 if type(exc) is requests.ReadTimeout:
                     if status_code == 0:
                         status_code = 598
