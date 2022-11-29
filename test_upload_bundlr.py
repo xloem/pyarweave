@@ -16,8 +16,13 @@ result = node.send_tx(di.tobytes())
 txid = result['id']
 
 peer = Peer()
-current_block = peer.current_block()
-eta = current_block['timestamp'] + (result['block'] - current_block['height']) * 60 * 2
+
+# bundlr used to return an expected block height but now seems to return some timestamp  2022-11
+# communicate with bundlr for details on their api.
+#current_block = peer.current_block()
+#eta = current_block['timestamp'] + (result['block'] - current_block['height']) * 60 * 2
+eta = int(result['timestamp']/1000)
+
 eta = datetime.datetime.fromtimestamp(eta)
 
-print(f'{peer.api_url}/{result["id"]} should be mined by {eta.isoformat()} block {result["block"]} or so, at the very latest.')
+print(f'{peer.api_url}/{result["id"]} timestamp={eta.isoformat()}')
