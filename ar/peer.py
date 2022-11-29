@@ -167,6 +167,7 @@ class HTTPClient:
                     continue
                 if type(exc) is requests.ConnectionError and len(exc.args) > 0 and type(exc.args[0]) is requests.urllib3.exceptions.ClosedPoolError:
                     # strange ClosedPoolError from urllib3 race condition? https://github.com/urllib3/urllib3/issues/951
+                    self._ratelimit_epilogue(False) # to reduce busylooping
                     continue
                 if type(exc) is requests.ReadTimeout:
                     if status_code == 0:
@@ -183,7 +184,7 @@ class HTTPClient:
                     self._ratelimit_epilogue(True)
                     continue
                 self.on_network_exception(text, status_code, exc, response)
-                raise ArweaveNetworkException(text, status_code, exc, response)
+                raise ArweaveNetworkException(text or repr(type(exc)), status_code, exc, response)
             except:
                 self._ratelimit_epilogue(True)
                 raise
