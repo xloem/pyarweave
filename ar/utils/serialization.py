@@ -1,4 +1,5 @@
 from jose.utils import base64url_encode, base64url_decode, base64
+from .. import ArweaveException
 
 def b64dec(data):
     return base64url_decode(utf8enc_if_not_bytes(data))
@@ -43,8 +44,15 @@ def arbinenc(data, bits):
     return size_raw + data
 
 def arbindec(stream, bits):
-    size = int.from_bytes(stream.read(bits // 8), 'big')
-    return stream.read(size)
+    size_size = bits // 8
+    size_raw = stream.read(size_size)
+    if len(size_raw) != size_size:
+        raise ArweaveException('stream terminated early')
+    size = int.from_bytes(size_raw, 'big')
+    data = stream.read(size)
+    if len(data) != size:
+        raise ArweaveException('stream terminated early')
+    return data
 
 def arintenc(integer, bits):
     if integer < 256:
@@ -58,5 +66,12 @@ def arintenc(integer, bits):
         return size_raw + int_raw
 
 def arintdec(stream, bits):
-    size = int.from_bytes(stream.read(bits // 8), 'big')
-    return int.from_bytes(stream.read(size), 'big')
+    size_size = bits // 8
+    size_raw = stream.read(size_size)
+    if len(size_raw) != size_size:
+        raise ArweaveException('stream terminated early')
+    size = int.from_bytes(size_raw, 'big')
+    int_raw = stream.read(size)
+    if len(int_raw) != size:
+        raise ArweaveException('stream terminated early')
+    return int.from_bytes(int_raw, 'big')
