@@ -1039,11 +1039,14 @@ class Peer(HTTPClient):
 
         return response.content
 
-    def stream(self, txid, range = None):
+    def stream(self, txid, range = None, reupload = True):
         try:
             return self.peer_stream(txid, range=range)
         except Exception:
-            return reupload(self, txid, range=range) # now reupload would be changed to stream to a file and return a handle to that file that deletes it when closed. makes faster
+            if reupload:
+                return reupload(self, txid, range=range) # now reupload would be changed to stream to a file and return a handle to that file that deletes it when closed. makes faster
+            else:
+                raise
 
     def gateway_stream(self, txid, ext ='', range = None):
         if range is not None:
