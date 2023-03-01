@@ -18,7 +18,7 @@ setup(
   name='PyArweave',
   version='0.4.15',
   description='Tiny Arweave Library',
-  author = 'Mike Hibbert',
+  author = 'xloem',
   long_description=open('README.md').read(),
   long_description_content_type='text/markdown',
   url='https://github.com/xloem/pyarweave',
