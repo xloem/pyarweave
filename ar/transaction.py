@@ -170,8 +170,9 @@ class Transaction(object):
     @property
     def api_url(self):
         return self.peer.api_url
+    
     @api_url.setter
-    def set_api_url(self, api_url):
+    def api_url(self, api_url):
         self.peer.api_url = api_url
 
     def from_serialized_transaction(self, transaction_json):
