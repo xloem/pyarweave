@@ -243,7 +243,7 @@ class Transaction(object):
             if self.uses_uploader:
                 self.prepare_chunks()
 
-            tag_list = [[tag['name'].encode(), tag['value'].encode()] for tag in self.tags]
+            tag_list = [[tag['name'], tag['value']] for tag in self.tags]
 
             signature_data_list = [
                 '2'.encode(),
@@ -345,7 +345,7 @@ class Transaction(object):
     def prepare_chunks(self):
         if not self.chunks:
             self.chunks = generate_transaction_chunks(self.file_handler)
-            self.data_root = b64enc(self.chunks.get('data_root'))
+            self.data_root = self.chunks.get('data_root')
 
         if not self.chunks:
             self.chunks = {
@@ -368,7 +368,7 @@ class Transaction(object):
         chunk_data = self.file_handler.read(chunk.data_size)
 
         return {
-            'data_root': self.data_root.decode(),
+            'data_root': self.data_root,
             'data_size': str(self.data_size),
             'data_path': b64enc(proof.proof),
             'offset': str(proof.offset),
