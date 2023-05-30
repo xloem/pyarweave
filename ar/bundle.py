@@ -1,6 +1,7 @@
 import io
 import json
 import struct
+import warnings
 
 from Crypto.Hash import SHA256
 from Crypto.Random import get_random_bytes
@@ -23,16 +24,36 @@ ANS104_TAGS_AVRO_SCHEMA = {
 }
 
 class ANS104BundleHeader:
-    def __init__(self, length_by_id = {}, version = 2):
-        self.length_by_id = length_by_id
+    def __init__(self, length_id_pairs = None, version = 2):
+        if type(length_id_pairs) is dict:
+            warnings.warn('ANS104BundleHeader takes a list over a dict now, to handle duplicate ids.', stacklevel=2)
+            length_id_pairs = [(length,id) for id, length in length_id_pairs.items()]
+        elif length_id_pairs is None:
+            length_id_pairs = []
+        self.length_id_pairs = length_id_pairs
         self.version = version
 
+    @property
+    def length_by_id(self):
+        return {
+            id: length
+            for length, id in self.length_id_pairs
+        }
+    @length_by_id.setter
+    def length_by_id(self, length_by_id):
+        self.length_id_pairs = [
+            (length, id)
+            for id, length in length_by_id.items()
+        ]
+
     def get_count(self):
-        return len(self.length_by_id)
+        return len(self.length_id_pairs)
 
     def get_length(self, id):
         id = b64enc_if_not_str(id)
-        return self.length_by_id(id)
+        for length, other_id in self.length_id_pairs:
+            if id == other_id:
+                return length
 
     def get_offset(self, id):
         return self.get_range(id)[0]
@@ -40,18 +61,18 @@ class ANS104BundleHeader:
     def get_range(self, id):
         total = self.get_len_bytes()
         id = b64enc_if_not_str(id)
-        for other_id, length in self.length_by_id.items():
+        for length, other_id in self.length_id_pairs:
             if other_id == id:
                 return total, total + length
             total += length
 
     def get_len_bytes(self):
-        return 32 + len(self.length_by_id) * 64
+        return 32 + len(self.length_id_pairs) * 64
 
     def tobytes(self):
         return self.get_count().to_bytes(32, 'little') + b''.join([
             int(length).to_bytes(32, 'little') + b64dec(id)
-            for id, length in self.length_by_id.items()
+            for length, id in self.length_id_pairs
         ])
 
     @classmethod
@@ -65,10 +86,10 @@ class ANS104BundleHeader:
     @classmethod
     def fromjson(cls, json):
         dataitems = [DataItem.fromjson(item) for item in json['items']]
-        return cls({
-            dataitem.header.id: dataitem.get_len_bytes()
+        return cls([
+            (dataitem.get_len_bytes(), dataitem.header.id)
             for dataitem in dataitems
-        }, version=1)
+        ], version=1)
 
     @classmethod
     def frombytes(cls, data):
@@ -84,10 +105,7 @@ class ANS104BundleHeader:
             for idx in range(entryct)
         ]
 
-        return cls({
-            id: length
-            for length, id in length_id_pairs
-        }, version=2)
+        return cls(length_id_pairs, version=2)
 
 class ANS104DataItemHeader:
     def __init__(self, tags = [], owner=None, target=None, anchor=None, signature=None, signer=DEFAULT_SIGNER):
@@ -473,7 +491,7 @@ class DataItem:
         elif fmt == b'binary':
             header = ANS104BundleHeader.fromstream(stream)
             offset = header.get_len_bytes()
-            for length in header.length_by_id.values():
+            for length, id in header.length_id_pairs:
                 dataitem = cls.fromstream(stream, length=length)
                 offset += length
                 yield dataitem
@@ -538,5 +556,5 @@ class Bundle:
     @classmethod
     def fromstream(cls, stream):
         header = ANS104BundleHeader.fromstream(stream)
-        dataitems = [DataItem.fromstream(stream, length) for id, length in header.length_by_id.items()]
+        dataitems = [DataItem.fromstream(stream, length) for length, id in header.length_id_pairs]
         return cls(dataitems, version = 2)
