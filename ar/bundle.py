@@ -49,10 +49,10 @@ class ANS104BundleHeader:
         return 32 + len(self.length_by_id) * 64
 
     def tobytes(self):
-        return self.get_count().to_bytes(32, 'little') + b''.join((
+        return self.get_count().to_bytes(32, 'little') + b''.join([
             int(length).to_bytes(32, 'little') + b64dec(id)
             for id, length in self.length_by_id.items()
-        ))
+        ])
 
     @classmethod
     def from_tags_stream(cls, tags, stream):
@@ -64,7 +64,7 @@ class ANS104BundleHeader:
 
     @classmethod
     def fromjson(cls, json):
-        dataitems = (DataItem.fromjson(item) for item in json['items'])
+        dataitems = [DataItem.fromjson(item) for item in json['items']]
         return cls({
             dataitem.header.id: dataitem.get_len_bytes()
             for dataitem in dataitems
@@ -79,10 +79,10 @@ class ANS104BundleHeader:
     def fromstream(cls, stream):
         entryct = int.from_bytes(stream.read(32), 'little')
 
-        length_id_pairs = (
+        length_id_pairs = [
             (int.from_bytes(stream.read(32), 'little'), b64enc(stream.read(32)))
             for idx in range(entryct)
-        )
+        ]
 
         return cls({
             id: length
@@ -387,15 +387,15 @@ class ANS104DataItemHeader:
                     return varint
         def avrobytesenc(data):
             return avrolongenc(len(data)) + data
-        return b''.join((
+        return b''.join([
             avrolongenc(len(tags)),
-            *(
+            *[
                 avrobytesenc(tag[key])
                 for tag in (normalize_tag(tag) for tag in tags)
                 for key in ("name", "value")
-            ),
+            ],
             b'\0' if len(tags) else b''
-        ))
+        ])
 
 class DataItem:
     def __init__(self, header = None, data = b'', version = 2):
@@ -505,7 +505,7 @@ class Bundle:
             dataitem.sign(private_key)
 
     def verify(self):
-        return all(dataitem.verify() for dataitem in self.dataitems)
+        return all([dataitem.verify() for dataitem in self.dataitems])
 
     @property
     def header(self):
@@ -523,7 +523,7 @@ class Bundle:
         }
 
     def tobytes(self):
-        return self.header.tobytes() + b''.join(item.tobytes() for item in self.dataitems)
+        return self.header.tobytes() + b''.join([item.tobytes() for item in self.dataitems])
     
     @classmethod
     def fromjson(cls, json):
