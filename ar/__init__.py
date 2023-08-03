@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 PUBLIC_GATEWAYS = [
     'https://arweave.net',
+    'https://ar-io.net',
     'https://arweave.live',
     'https://arweave-dev.everpay.io'
 ]
