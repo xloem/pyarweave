@@ -378,7 +378,7 @@ class Peer(HTTPClient):
         response = self._get_json('queue')
         return response
 
-    def tx_status(self, hash):
+    def tx_status(self, txid):
         '''
         Return additional information about the transaction with the given identifier (hash).
 
