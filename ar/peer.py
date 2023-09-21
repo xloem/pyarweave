@@ -1044,7 +1044,7 @@ class Peer(HTTPClient):
             return self.peer_stream(txid, range=range)
         except Exception:
             if reupload:
-                return reupload(self, txid, range=range) # now reupload would be changed to stream to a file and return a handle to that file that deletes it when closed. makes faster
+                return reupload_tx(self, txid, range=range) # now reupload would be changed to stream to a file and return a handle to that file that deletes it when closed. makes faster
             else:
                 raise
 
@@ -1147,7 +1147,7 @@ class Peer(HTTPClient):
 from ar.utils.merkle import compute_root_hash, generate_transaction_chunks
 from ar.utils import b64enc
 import tempfile, shutil
-def reupload(peer, tx, range=None):
+def reupload_tx(peer, tx, range=None):
     stream = tempfile.SpooledTemporaryFile()
     with peer.gateway_stream(tx) as network_data:
         shutil.copyfileobj(network_data, stream)
