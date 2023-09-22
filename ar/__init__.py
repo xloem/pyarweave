@@ -16,11 +16,14 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_GATEWAY_ADDRESS_REGISTRY_CACHE = 'https://dev.arns.app/v1/contract/bLAgYxAdX2Ry-nt6aH2ixgvJXbpsEYm28NgJgyqfs-U/gateways'
+TEST_GATEWAY_ADDRESS_REGISTRY_CACHE = 'https://dev.arns.app/v1/contract/E-pRI1bokGWQBqHnbut9rsHSt9Ypbldos3bAtwg4JMc/gateways'
+
 PUBLIC_GATEWAYS = [
     'https://arweave.net',
     'https://ar-io.net',
+    'https://arweave-dev.everpay.io',
     'https://arweave.live',
-    'https://arweave-dev.everpay.io'
 ]
 
 DEFAULT_API_URL = PUBLIC_GATEWAYS[0]
