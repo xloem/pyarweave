@@ -3,9 +3,12 @@ from ar.peer import HTTPClient
 
 DEFAULT_API_URL = 'https://node2.bundlr.network'
 DEFAULT_CHAIN = 'arweave'
+DEFAULT_API_URL_FINGERPRINT = 'e55fec18e416f39d0edf7807534257a188c7ec4cdd3d0d6de17eb3051a4e084c'
 
 class Node(HTTPClient):
-    def __init__(self, api_url = DEFAULT_API_URL, timeout = None, retries = 5, outgoing_connections = 100, requests_per_period = 10000, period_sec = 60, cert_fingerprint = None):
+    def __init__(self, api_url = DEFAULT_API_URL, timeout = None, retries = 5, outgoing_connections = 100, requests_per_period = 10000, period_sec = 60, cert_fingerprint = DEFAULT_API_URL_FINGERPRINT):
+        if cert_fingerprint == DEFAULT_API_URL_FINGERPRINT and api_url != DEFAULT_API_URL:
+            cert_fingerprint = None
         super().__init__(api_url, timeout, retries, outgoing_connections = outgoing_connections, requests_per_period = requests_per_period, period_sec = period_sec, cert_fingerprint = cert_fingerprint)
 
     def account_withdrawals_address(self, address, currency = DEFAULT_CHAIN):
