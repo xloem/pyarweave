@@ -58,9 +58,9 @@ def tags_to_dict(tags):
         for tag in tags
     }
 
-def dict_to_tags(tags_dict):
+def dict_to_tags(tags_dict, v2=True):
     return [
-        create_tag(key, value)
+        create_tag(key, value, v2)
         for key, value in tags_dict.items()
     ]
 

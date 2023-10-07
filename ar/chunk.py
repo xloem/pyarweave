@@ -67,11 +67,15 @@ class Chunk:
     @classmethod
     def fromstream(cls, stream):
         data = arbindec(stream, 24)
+        tx_path_bin = arbindec(stream, 24)
+        data_path_bin = arbindec(stream, 24)
+        packing_bin = arbindec(stream, 8)
+        assert len(tx_path_bin) # have not diagnosed why this raises sometimes
         return cls(
             data = data,
-            tx_path = MerkleNode.frombytes(arbindec(stream, 24)),
-            data_path = MerkleNode.frombytes(arbindec(stream, 24), max_byte_range=len(data)),
-            packing = arbindec(stream, 8).decode()
+            tx_path = MerkleNode.frombytes(tx_path_bin),
+            data_path = MerkleNode.frombytes(data_path_bin, max_byte_range=len(data)),
+            packing = packing_bin.decode()
         )
 
 

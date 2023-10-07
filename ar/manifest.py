@@ -29,7 +29,7 @@ class Manifest:
                 else {}
             ),
             paths = {
-                path: dict(id=txid)
+                path: txid if type(txid) is dict else dict(id=txid)
                 for path, txid in self.path_txids.items()
             }
         )

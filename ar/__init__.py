@@ -284,5 +284,6 @@ from .block import Block
 from .chunk import Chunk
 from .stream import PeerStream, GatewayStream
 from .arweave_lib import arql
+from .manifest import Manifest
 from .bundle import Bundle, DataItem, ANS104BundleHeader, ANS104DataItemHeader
 
