@@ -6,6 +6,7 @@ from pqdm.threads import pqdm # maybe joblib Parallel verbose=True instead
 
 if len(sys.argv) > 1:
     fetchid = sys.argv[1]
+    fetchid_text = requests.get(f'https://ar-io.net/{fetchid}').text
 #    fastest_time = float('inf')
 #    fastest_url = None
 else:
@@ -17,6 +18,7 @@ def measure_entry(entry):
     try:
         response = requests.get(f'{url}/{fetchid}', timeout=15)
         response.raise_for_status()
+        assert response.text == fetchid_text
     except:
         pass
     else:
