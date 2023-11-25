@@ -139,12 +139,11 @@ class BackedStructur:
         self._block_raw = block_raw
         if block_raw is not None:
             assert len(block_raw) == 48
-        self.bytes = bytes
         self.loader = loader
         self.tags = tags
         self.dirty = False
         self.name = name
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
 
         if self.id_raw is None:
             # shadow could be a stream for large arrays and sparse access
@@ -268,12 +267,6 @@ class BackedStructur:
             #import pdb; pdb.set_trace()
             time.sleep(60)
 
-    def __enter__(self):
-        self.get()
-
-    def __exit__(self, *params):
-        self.flush()
-
     def __getitem__(self, index):
         offset = index * self.item_size
         return bytes(self.get()[offset : offset + self.item_size])
@@ -287,6 +280,7 @@ class BackedStructur:
             if shadow[offset : offset + self.item_size] != value:
                 shadow[offset : offset + self.item_size] = value
                 self.dirty = True
+                self.dirty_origin = f'shadow set {index} {value}'
 
     def __len__(self):
         return self.item_count
@@ -303,6 +297,7 @@ class BackedStructur:
         with self.lock:
             self.item_count += 1
             self.dirty = True
+            self.dirty_origin = f'append {value}'
             self.shadow += value
     
     def get(self):
@@ -313,6 +308,9 @@ class BackedStructur:
                     self.shadow = bytearray(self.loader.data(*ids))
                     self.size = len(self.shadow)
         return self.shadow
+
+    def wait_for_mined(self):
+        self.block_raw
 
     def flush(self):
         with self.lock:
@@ -454,6 +452,7 @@ class TableDoc:
             for entry_raw in self.remote_data
         ]
         self.count = sum((type != self.EMPTY for type, entry in self.obj_list))
+        self._flush_leaves = []
 
     def _set_obj_list(self, idx, value):
         self.obj_list[idx] = value
@@ -509,6 +508,8 @@ class TableDoc:
         hash_digit = hash_digits[self.depth]
         with self.lock:
             entry_type, entry = self._get_filling_if_needed(hash_digit)
+            orig_entry_type = entry_type
+            orig_entry = entry
             if entry_type == self.MANY:
                 # it's already a table
                 # get 1 item from it, and compare the digits.
@@ -532,6 +533,7 @@ class TableDoc:
                     )
                     example_digit = example_digits[subtable.depth]
                     subtable.remote_data.dirty = True
+                    subtable.remote_data.dirty_origin = f'table split from {hash_digit} ({orig_entry_type} {orig_entry}'
                     subtable._set_obj_list(example_digit, (entry_type, entry)) # replaced entry
                     # since evaluation continues, the new entry will be added below
                     #subtable.add(hash_digits, block_raw, txid_raw, dataitem_raw) # new entry
@@ -576,6 +578,7 @@ class TableDoc:
             else:
                 raise StructureException('unhandled table entry type', entry_type)
             self.remote_data.dirty = True
+            self.remote_data.dirty_origin = f'add {hash_digit} ({orig_entry_type} {orig_entry}) -> ({entry_type} {entry})'
             self._set_obj_list(hash_digit, (entry_type, entry))
 
     def get(self, hash_digits):
@@ -616,18 +619,20 @@ class TableDoc:
                 #    '''this may be the parent branch that is wrongly returning itself with an unmined leaf when include_unmined is False'''
                 with entry.lock:
                     subleaves = entry._get_flush_leaves(include_unmined = include_unmined)
-                if len(subleaves):
-                    leaves.extend(subleaves)
-                else:
-                    # this hack sets the dirty flag if the outer document needs to update its entry for the inner document
-                    subid = entry.remote_data.id_raw
-                    if entry.remote_data.dirty or subid is None or self.remote_data[idx][-len(subid):] != subid:
-                        if include_unmined or entry.get_mined(peek=True):
-                            self.remote_data.dirty = True
-                        else:
+                    if len(subleaves):
+                        leaves.extend(subleaves)
+                    else:
+                        # this hack sets the dirty flag if the outer document needs to update its entry for the inner document
+                            # i believe this is now handled by get_mined and the code could move into get_mined
+                        subid = entry.remote_data.id_raw
+                        if entry.remote_data.dirty or subid is None or self.remote_data[idx][-len(subid):] != subid:
+                            if include_unmined or entry.get_mined(peek=True):
+                                self.remote_data.dirty = True
+                                self.remote_data.dirty_origin = f'unmined entry {idx} new:{b64enc(subid)} != old:{b64enc(self.remote_data[idx][-len(subid):])}'
+                            else:
+                                skip = True
+                        elif not include_unmined and not entry.get_mined(peek=True):
                             skip = True
-                    elif not include_unmined and not entry.get_mined(peek=True):
-                        skip = True
             elif entry_type == self.DATA and not isinstance(entry, (bytes, bytearray)):
                 self.remote_data[idx] = bytes([entry_type]) + b''.join(entry[1])
         ar.logger.debug(f'{self.remote_data.name}: skip={skip} dirty={self.remote_data.dirty} preleaves={[leaf.remote_data.name for leaf in leaves]}')
@@ -641,13 +646,27 @@ class TableDoc:
         return leaves
 
     def get_mined(self, peek):
-        if not self.remote_data.get_mined(peek):
-            return False
-        for idx, (entry_type, entry) in enumerate(self.obj_list):
-            if (isinstance(entry, self.__class__) or isinstance(self, entry.__class__)):
-                if not entry.get_mined(peek):
-                    return False
-        return True
+        # outside of this function, there's an extant condition for whether or not
+        #  the actual entry value differs from the id of the smaller document.
+        #  - note: it is the obj list that matters, and the dirty flag, not the entry value
+        #  what is the condition under which the values are reprovided?
+            # it looks like, on flush, every value is reprovided, if it is unmined or dirty [checking]
+                # actually, bytes values in the obj list do not appear to be updated .. but new tables
+                # are only made with changing their parents' obj lists to something other than bytes.
+        # - the obj list is updated whenever a table entry is updated
+        # - the obj list is flushed every time a table is flushed
+        # when are subtables flushed?
+            # this probably happens when table.raw_ids is accessed
+            # it looks like flushing top down means calling flush on every child
+        with self.lock:
+            if not self.remote_data.get_mined(peek):
+                return False
+            for idx, (entry_type, entry) in enumerate(self.obj_list):
+                if (isinstance(entry, self.__class__) or isinstance(self, entry.__class__)):
+                    if not entry.get_mined(peek):
+                        self.remote_data.dirty = True
+                        return False
+            return True
 
     def flush_leaves(self, skip_if_leaf = False, include_unmined = True):
         # it looks like things could be simplified some if _get_flush_leaves were merged with flush_leaves. and leaves flushed when encountered.
@@ -709,19 +728,21 @@ class TableDoc:
                         entry = b''.join(entry[1])
                     self.remote_data[idx] = bytes([entry_type]) + entry
             self.remote_data.flush()
-            # plausible race condition on this line between locks, seems non-impactful
+            # plausible race condition on this line between locks, may occasionally cause poor flush but catches other errors?
 
     @property
     def ids(self):
         if self.count == 0:
             return None
-        self.flush()
-        return self.remote_data.ids
+        with self.lock:
+            self.flush()
+            return self.remote_data.ids
 
     @property
     def raw_ids(self):
-        self.flush()
-        return self.remote_data.ids_raw
+        with self.lock:
+            self.flush()
+            return self.remote_data.ids_raw
     
     def __getitem__(self, hash):
         digits = self.hash_to_digits(hash)
@@ -932,41 +953,44 @@ class BundleIndexer:
         ar.logger.info(f'Processed block {height}: {block.indep_hash}')
 
     def add_forward(self, count=1, at_once=3):
-        WorkerPool(
-            action = lambda idx: self._insert_block(idx, flush_leaves = ((idx % at_once) == 0)),
-            max_jobs = at_once,
-            retries = 1
-        ).process(range(self.next_block, self.next_block + count))
-        #[self._insert_block(x) for x in range(self.next_block, self.next_block + count)]
-        ar.logger.info(f'Processed {count} blocks forward.')
-        if self.prev_block == self.next_block:
-            self.prev_block -= 1
-        self.next_block += count
-        change_tag(self.root.remote_data.tags, 'Block-Max', str(self.next_block - 1), condense_to_one=True)
+        with self.lock:
+            WorkerPool(
+                action = lambda idx: self._insert_block(idx, flush_leaves = ((idx % at_once) == 0)),
+                max_jobs = at_once,
+                retries = 1
+            ).process(range(self.next_block, self.next_block + count))
+            #[self._insert_block(x) for x in range(self.next_block, self.next_block + count)]
+            ar.logger.info(f'Processed {count} blocks forward.')
+            if self.prev_block == self.next_block:
+                self.prev_block -= 1
+            self.next_block += count
+            change_tag(self.root.remote_data.tags, 'Block-Max', str(self.next_block - 1), condense_to_one=True)
 
     def add_backward(self, count=1, at_once=3):
-        WorkerPool(
-            action = self._insert_block,
-            max_jobs = at_once
-        ).process(range(max(0,self.prev_block - count + 1), self.prev_block + 1, -1))
-        ar.logger.info(f'Processed {count} blocks backward.')
-        if self.next_block == self.prev_block:
-            self.next_block += 1
-        self.prev_block -= count
-        if self.prev_block < -1:
-            self.prev_block = -1
-        change_tag(self.root.remote_data.tags, 'Block-Min', str(self.prev_block + 1), condense_to_one=True)
+        if self.lock:
+            WorkerPool(
+                action = self._insert_block,
+                max_jobs = at_once
+            ).process(range(max(0,self.prev_block - count + 1), self.prev_block + 1, -1))
+            ar.logger.info(f'Processed {count} blocks backward.')
+            if self.next_block == self.prev_block:
+                self.next_block += 1
+            self.prev_block -= count
+            if self.prev_block < -1:
+                self.prev_block = -1
+            change_tag(self.root.remote_data.tags, 'Block-Min', str(self.prev_block + 1), condense_to_one=True)
 
     def save(self):
         ar.logger.info(f'Saving ...')
-        self.missing_data.flush_leaves(include_unmined = False)
-        self.root.flush_leaves(skip_if_leaf = True, include_unmined = False)
-        if self.missing_data.ids is not None:
-            missing_data_block, missing_data_txid, missing_data_dataitem_id = self.missing_data.ids
-            ensure_tag(self.root.remote_data.tags, b'Missing-Data-Block', missing_data_block)
-            ensure_tag(self.root.remote_data.tags, b'Missing-Data-Bundle', missing_data_txid)
-            ensure_tag(self.root.remote_data.tags, b'Missing-Data-DataItem', missing_data_dataitem_id)
-        block, bundle, id = self.root.ids
+        with self.lock:
+            self.missing_data.flush_leaves(include_unmined = False)
+            self.root.flush_leaves(skip_if_leaf = True, include_unmined = False)
+            if self.missing_data.ids is not None:
+                missing_data_block, missing_data_txid, missing_data_dataitem_id = self.missing_data.ids
+                ensure_tag(self.root.remote_data.tags, b'Missing-Data-Block', missing_data_block)
+                ensure_tag(self.root.remote_data.tags, b'Missing-Data-Bundle', missing_data_txid)
+                ensure_tag(self.root.remote_data.tags, b'Missing-Data-DataItem', missing_data_dataitem_id)
+            block, bundle, id = self.root.ids
         with open(self.filename + '.new', 'wt') as file:
             json.dump({
                 'id': id,
