@@ -39,7 +39,7 @@ class HTTPClient:
             max_retries = max_retries,
             pool_block = True,
         )
-        self.session.mount('http://', adapter)
+        #self.session.mount('http://', adapter)
         self.session.mount('https://', adapter)
         self.timeout = timeout
     def __del__(self):
