@@ -80,25 +80,14 @@ with tqdm.tqdm(total=100000*TOTAL_COUNT, unit='B', unit_scale=True, smoothing=0)
 '''
 
 print('toys.node2_pump.Pump ...')
-with toys.node2_pump.Bisect3(node, at_once=10, period_secs=1) as bisect:
+with toys.node2_pump.Pump(node, at_once=600, period_secs=60) as pump:
     with tqdm.tqdm(total=100000*len(data), unit='B', unit_scale=True, smoothing=0) as pbar:
         for idx in tqdm.tqdm(range(len(data)),total=len(data),desc='Encoding',leave=False,unit='di'):
             di = DataItem(data=data[idx])
             di.sign(wallet.rsa)
-            bisect.feed(di)
-        for result in bisect.fetch(len(data)):
+            pump.feed(di)
+        for result in pump.fetch(len(data)):
             pbar.update(100000)
-
-print('Bisect ...')
-bisect = toys.node2_pump.Bisect(node, data, wallet, TOTAL_COUNT)
-bisect.go()
-
-print('Bisect2 ...')
-bisect = toys.node2_pump.Bisect2(node, wallet, at_once=10, period_secs=1)
-with tqdm.tqdm(total=100000*len(data), unit='B', unit_scale=True, smoothing=0) as pbar:
-    bisect.feed(data)
-    for result in bisect.fetch(len(data)):
-        pbar.update(100000)
 
 print('concurrent.futures.ThreadPoolExecutor ...')
 encode()
@@ -121,13 +110,6 @@ with tqdm.tqdm(total=100000*TOTAL_COUNT, unit='B', unit_scale=True, smoothing=0)
         if now < mark:
             pbar.display(f'sleeping for {mark - now}')
             time.sleep(mark - now)
-
-print('toys/node2_pump.py ...')
-encode()
-with tqdm.tqdm(total=100000*TOTAL_COUNT, unit='B', unit_scale=True, smoothing=0) as pbar, toys.node2_pump.Pump(node, at_once=10, period_secs=1) as pump:
-    for fut in [pump.enqueue(di) for di in dataitems]:
-        fut.result()
-        pbar.update(100000)
 
 print('multiprocessing.pool.ThreadPool ...')
 encode()
