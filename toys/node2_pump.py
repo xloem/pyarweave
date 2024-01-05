@@ -80,7 +80,9 @@ class Pump(threading.Thread):
                     now = time.time()
                     if now > next_mark:
                         tx_count = 0
-                        next_mark = now + self.period_secs
+                        next_mark += self.period_secs
+                        if now > next_mark:
+                            next_mark = now + self.period_secs
                     if tx_count < self.at_once:
                         sys_fut = pool.submit(self.node.send_tx, di)
                         user_fut.proxy(sys_fut)
