@@ -19,11 +19,11 @@ from Crypto.Signature import PKCS1_PSS
 from Crypto.Hash import SHA384
 
 
-def deep_hash(data):
+def deep_hash(data, partial=None):
     if type(data) == list:
         tag = b'list' + str(len(data)).encode()
 
-        return deep_hash_chunks(data, hashlib.sha384(tag).digest())
+        return deep_hash_chunks(data[:partial], hashlib.sha384(tag).digest())
 
     else:
         tag = b'blob' + str(len(data)).encode()

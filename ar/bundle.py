@@ -442,9 +442,8 @@ class DataItem:
                 [tag['name'], tag['value']]
                 for tag in self.header.tags
             ])
-        if include_data:
-            items.append(self.data)
-        return deep_hash(items)
+        items.append(self.data)
+        return deep_hash(items, partial=None if include_data else -1)
 
     def sign(self, private_key):
         self.header.raw_owner = self.header.signer.raw_owner(private_key)
@@ -462,10 +461,10 @@ class DataItem:
             for key, value in tag.items():
                 if len(value) == 0:
                     return False
-        if len(tag['name']) > 1024:
-            return False
-        if len(tag['value']) > 3072:
-            return False
+            if len(tag['name']) > 1024:
+                return False
+            if len(tag['value']) > 3072:
+                return False
         public_key = self.header.signer.public_key(self.header.raw_owner)
         return self.header.signer.verify(public_key, self.get_raw_signature_data(), self.header.raw_signature)
 

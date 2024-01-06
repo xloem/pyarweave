@@ -16,7 +16,7 @@ from setuptools import setup, find_packages
 
 setup(
   name='PyArweave',
-  version='0.6.0',
+  version='0.6.1',
   description='Tiny Arweave Library',
   author = 'xloem',
   long_description=open('README.md').read(),
