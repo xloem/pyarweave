@@ -60,7 +60,7 @@ class Pump(threading.Thread):
         self.data_event.set()
         return fut.result()
     def run(self):
-        with concurrent.futures.ThreadPoolExecutor() as pool:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=self.at_once) as pool:
             mark = time.time()
             next_mark = mark + self.period_secs
             sys_futs = set()
