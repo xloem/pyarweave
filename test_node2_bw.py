@@ -5,6 +5,10 @@ print('Bundlr node2 can theoretically provide free uploads at a rate of 1MB/s,')
 print(' if they are blocked into 100kb transactions and limited to 600/min.')
 print()
 print('Can we accomplish this speed?')
+print()
+print(' [note: after exploration, it appears the speed is uncapped atm,')
+print('  and speeds near and above 1MB/s are just rate control artefacts.]')
+print()
 
 import os, random, time
 import tqdm
@@ -99,7 +103,7 @@ def send(di):
     with lock:
         pbar.update(100000)#len(di))
     return result
-with tqdm.tqdm(total=100000*TOTAL_COUNT, unit='B', unit_scale=True, smoothing=0) as pbar, concurrent.futures.ThreadPoolExecutor() as pool:
+with tqdm.tqdm(total=100000*TOTAL_COUNT, unit='B', unit_scale=True, smoothing=0) as pbar, concurrent.futures.ThreadPoolExecutor(max_workers=10) as pool:
     for chunk_offset in range(0, TOTAL_COUNT, 10):
         results = pool.map(send, dataitems[chunk_offset:chunk_offset+10])
         results = list(results) # enumerates generator
@@ -121,7 +125,7 @@ def send(di):
     with lock:
         pbar.update(100000)#len(di))
     return result
-with tqdm.tqdm(total=100000*TOTAL_COUNT, unit='B', unit_scale=True, smoothing=0) as pbar, multiprocessing.pool.ThreadPool() as pool:
+with tqdm.tqdm(total=100000*TOTAL_COUNT, unit='B', unit_scale=True, smoothing=0) as pbar, multiprocessing.pool.ThreadPool(processes=10) as pool:
     for chunk_offset in range(0, TOTAL_COUNT, 10):
         results = pool.map(send, dataitems[chunk_offset:chunk_offset+10])
         expected_sent += 10 * 100000
