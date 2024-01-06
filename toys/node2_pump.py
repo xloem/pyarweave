@@ -1,6 +1,8 @@
 import concurrent.futures
 import threading, queue
 import time
+import logging
+logger = logging.getLogger(__name__)
 
 import ar
 import tqdm
@@ -24,16 +26,25 @@ class Pump(threading.Thread):
     '''
     A Thread that autostarts when used as a context manager and pumps
     data to a bundlr node in the background, attempting to maximally
-    reach a defined number of transactions per period of time.
+    reach a defined number of bytes per period of time.
+
+    This class has been updated to work in terms of bytes rather
+    than transactions, which seems to better reflect real-world
+    conditions.
     
     Ongoing data can be passed to feed() and batches of receipts
     iterated with fetch() in order. Incidental data can be returned
     in a single call to immed() and will be moved toward the top of
     the queue to get a quick result.
+
+    The default parameters were those listed in the bundler developer
+    Discord FAQ in January 2024, and provide for speeds of 1MB/s.
+    Passing None for bytes_per_period will maintain a running
+    measurement of capacity.
     '''
-    def __init__(self, node, at_once=600, period_secs=60):
+    def __init__(self, node, bytes_per_period=600*102400, period_secs=60):
         self.node = node
-        self.at_once = at_once
+        self.period_bytes_limit = bytes_per_period
         self.period_secs = period_secs
         self.queue_bg_in = queue.Queue()
         self.queue_fg = queue.Queue()
@@ -60,11 +71,16 @@ class Pump(threading.Thread):
         self.data_event.set()
         return fut.result()
     def run(self):
-        with concurrent.futures.ThreadPoolExecutor(max_workers=self.at_once) as pool:
-            mark = time.time()
-            next_mark = mark + self.period_secs
+        period_bytes_limit = self.period_bytes_limit
+        period_bytes_best = 0
+        with concurrent.futures.ThreadPoolExecutor(max_workers=128) as pool:
+            mark_send = time.time()
+            mark_send_next = mark_send + self.period_secs
+            mark_recv = None
+            mark_recv_next = None
             sys_futs = set()
-            tx_count = 0
+            period_bytes_sent = 0
+            period_bytes_returned = 0
             while True:
                 self.data_event.clear()
                 if self.queue_fg.qsize():
@@ -76,24 +92,58 @@ class Pump(threading.Thread):
                 else:
                     self.data_event.wait(timeout=0.125)
                     continue
-                while True:
-                    now = time.time()
-                    if now > next_mark:
-                        tx_count = 0
-                        next_mark += self.period_secs
-                        if now > next_mark:
-                            next_mark = now + self.period_secs
-                    if tx_count < self.at_once:
-                        sys_fut = pool.submit(self.node.send_tx, di)
-                        user_fut.proxy(sys_fut)
-                        sys_futs.add(sys_fut)
-                        tx_count += 1
-                        break
-                    done, sys_futs = concurrent.futures.wait(
-                        sys_futs,
-                        timeout=next_mark-now,
-                        return_when=concurrent.futures.FIRST_COMPLETED
-                    )
+                now = time.time()
+                if period_bytes_limit is not None and period_bytes_sent >= period_bytes_limit:
+                    time.sleep(mark_send_next - now)
+                    now = mark_send_next
+                if now >= mark_send_next:
+                    period_bytes_sent = 0
+                    mark_send_next += self.period_secs
+                    if now > mark_send_next:
+                        mark_send_next = now + self.period_secs
+                period_bytes_sent += len(di)
+                sys_fut = pool.submit(self.node.send_tx, di)
+                sys_fut.size = len(di)
+                sys_fut.time = now
+                user_fut.proxy(sys_fut)
+                sys_futs.add(sys_fut)
+                done, sys_futs = concurrent.futures.wait(
+                    sys_futs,
+                    timeout=0,
+                    return_when=concurrent.futures.FIRST_COMPLETED
+                )
+                if done:
+                    if mark_recv is None:
+                        mark_recv = min([fut.time for fut in done])
+                        mark_recv_next = mark_recv + self.period_secs
+                    while True:
+                        done_next_period = set([fut for fut in done if fut.time >= mark_recv_next])
+                        done_this_period = done - done_next_period
+                        period_bytes_returned += sum([fut.size for fut in done_this_period])
+
+                        if not done_next_period:
+                            break
+                        
+                        if period_bytes_returned > period_bytes_best:
+                            period_bytes_best = period_bytes_returned
+                            if self.period_bytes_limit is None:
+                                # whatever we actually send is the max bandwidth
+                                period_bytes_limit = period_bytes_best
+                            elif period_bytes_best < self.period_bytes_limit:
+                                import inspect
+                                logger.warn(inspect.cleandoc(f'''-v
+                                    Measured bytes_per_period underperforms passed bytes_per_period;
+                                    this will slow behavior from backpressure if it persists.
+                                    Pass None to simply use measured value.
+                                    measured={period_bytes_best}/{self.period_secs}
+                                    passed={self.period_bytes_limit}/{self.period_secs}
+                                '''))
+
+                        mark_recv = mark_recv_next
+                        mark_recv_next += self.period_secs
+                        done = done_next_period
+                        period_bytes_returned = 0
+                    
             while len(sys_futs):
                 done, sys_futs = concurrent.futures.wait(
                     sys_futs,

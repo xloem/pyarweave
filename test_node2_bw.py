@@ -84,7 +84,8 @@ with tqdm.tqdm(total=100000*TOTAL_COUNT, unit='B', unit_scale=True, smoothing=0)
 '''
 
 print('toys.node2_pump.Pump ...')
-with toys.node2_pump.Pump(node, at_once=10, period_secs=1) as pump:
+with toys.node2_pump.Pump(node, bytes_per_period=102400*10, period_secs=1) as pump:
+#with toys.node2_pump.Pump(node, bytes_per_period=None, period_secs=1) as pump:
     with tqdm.tqdm(total=100000*len(data), unit='B', unit_scale=True, smoothing=0) as pbar:
         for idx in tqdm.tqdm(range(len(data)),total=len(data),desc='Encoding',leave=False,unit='di'):
             di = DataItem(data=data[idx])
