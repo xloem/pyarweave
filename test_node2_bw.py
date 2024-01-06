@@ -82,7 +82,7 @@ with tqdm.tqdm(total=100000*TOTAL_COUNT, unit='B', unit_scale=True, smoothing=0)
     for result in pool.map(node.send_tx, queue):
         pbar.update(100000)
 '''
-
+           
 print('toys.node2_pump.Pump ...')
 with toys.node2_pump.Pump(node, bytes_per_period=102400*10, period_secs=1) as pump:
 #with toys.node2_pump.Pump(node, bytes_per_period=None, period_secs=1) as pump:
@@ -115,6 +115,19 @@ with tqdm.tqdm(total=100000*TOTAL_COUNT, unit='B', unit_scale=True, smoothing=0)
         if now < mark:
             pbar.display(f'sleeping for {mark - now}')
             time.sleep(mark - now)
+
+import yarl39
+print('yarl39 ...')
+#with yarl39.SyncThreadPump(node.send_tx, size_per_period=None, period_secs=1) as pump:
+with yarl39.SyncThreadPump(node, bytes_per_period=102400*10, period_secs=1) as pump:
+    with tqdm.tqdm(total=100000*len(data), unit='B', unit_scale=True, smoothing=0) as pbar:
+        for idx in tqdm.tqdm(range(len(data)),total=len(data),desc='Encoding',leave=False,unit='di'):
+            di = DataItem(data=data[idx])
+            di.sign(wallet.rsa)
+            byts = di.tobytes()
+            pump.feed(len(byts), byts)
+        for result in pump.fetch(len(data)):
+            pbar.update(100000)
 
 print('multiprocessing.pool.ThreadPool ...')
 encode()

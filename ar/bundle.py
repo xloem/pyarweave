@@ -228,16 +228,16 @@ class ANS104DataItemHeader:
         raw = io.BytesIO()
         if self.target is not None:
             target_struct = '?32s'
-            target_values = (True, self.raw_target)
+            target_values = [True, self.raw_target]
         else:
             target_struct = '?'
-            target_values = (False,)
+            target_values = [False]
         if self.anchor is not None:
             anchor_struct = '?32s'
-            anchor_values = (True, self.raw_anchor)
+            anchor_values = [True, self.raw_anchor]
         else:
             anchor_struct = '?'
-            anchor_values = (False,)
+            anchor_values = [False,]
         raw_tags = self.raw_tags
         return struct.pack(
             (
@@ -423,7 +423,7 @@ class DataItem:
         self.header = header
         self.version = version
 
-    def get_raw_signature_data(self):
+    def get_raw_signature_data(self, include_data = True):
         items = [
             b'dataitem',
             b'1'
@@ -442,7 +442,8 @@ class DataItem:
                 [tag['name'], tag['value']]
                 for tag in self.header.tags
             ])
-        items.append(self.data)
+        if include_data:
+            items.append(self.data)
         return deep_hash(items)
 
     def sign(self, private_key):
