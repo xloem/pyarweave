@@ -93,7 +93,7 @@ class Pump(threading.Thread):
                     self.data_event.wait(timeout=0.125)
                     continue
                 now = time.time()
-                if period_bytes_limit is not None and period_bytes_sent >= period_bytes_limit:
+                if period_bytes_limit is not None and period_bytes_sent >= period_bytes_limit and mark_send_next > now:
                     time.sleep(mark_send_next - now)
                     now = mark_send_next
                 if now >= mark_send_next:

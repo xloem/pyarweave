@@ -20,7 +20,6 @@ def AcceleratedSigner(ditem, key):
     key = cryptography.hazmat.primitives.serialization.load_pem_private_key(key.export_key(),password=None)
     partial_signing_data = ditem.get_raw_signature_data(include_data = False)
     template = ditem.tobytes()
-    print(len(template))
     example_sig = ditem.header.raw_signature
     sig_offset = template.find(example_sig)
     while sig_offset != template.rfind(example_sig):
@@ -36,7 +35,6 @@ def AcceleratedSigner(ditem, key):
         Clone this object for use in other threads.
         '''
         template_ = bytearray(template)
-        print(len(template_))
         class AcceleratedSigner:
             def header(data):
                 '''
