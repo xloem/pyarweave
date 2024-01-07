@@ -38,8 +38,8 @@ class Sender:
         self.headerview = self.bufview[:self.headersize]
         self.dataview  = self.bufview[self.headersize:]
         self.send_tx = bundlr.Node().send_tx
-    def push(self, stream, filesize):
         self.min_block = ar.Peer().current_block()
+    def push(self, stream, filesize):
         signing = self.signing
         headersize = self.headersize
         payloadsize = self.payloadsize
@@ -65,6 +65,7 @@ class Sender:
             for result in pump.fetch(remaining_chunks):
                 yield result
                 pbar.update(min(pbar.n + payloadsize, filesize) - pbar.n)
+        self.min_block = ar.Peer().current_block()
 
 
 def main():
@@ -94,6 +95,8 @@ def main():
     fields = {
         'name': os.path.basename(stream.name),
         'size': size,
+        'start_height': sender.min_block['height'],
+        'start_block': sender.min_block['indep_hash'],
     }
     fields['name'] = os.path.basename(stream.name)
     while ct > 1:
