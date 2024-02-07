@@ -26,6 +26,8 @@ import yarl39
 import ar, bundlr
 import tqdm
 
+GATEWAY='https://baristestnet.xyz'
+
 # T_T we made it so near. it could become useful soon :)
 class Sender:
     def __init__(self, key):
@@ -37,8 +39,17 @@ class Sender:
         self.bufview = memoryview(self.buf)
         self.headerview = self.bufview[:self.headersize]
         self.dataview  = self.bufview[self.headersize:]
-        self.send_tx = bundlr.Node().send_tx
-        self.min_block = ar.Peer().current_block()
+        node = bundlr.Node()
+        def send_tx(*params, **kwparams):
+            while True:
+                try:
+                    return node.send_tx(*params, **kwparams)
+                except ar.ArweaveNetworkException as e:
+                    print(e, file=sys.stderr)
+                    continue
+        self.send_tx = send_tx #bundlr.Node().send_tx
+        with tqdm.tqdm(desc='current_block from ' + GATEWAY, leave=False):
+            self.min_block = ar.Peer(GATEWAY).current_block()
     def push(self, stream, filesize):
         signing = self.signing
         headersize = self.headersize
@@ -65,7 +76,8 @@ class Sender:
             for result in pump.fetch(remaining_chunks):
                 yield result
                 pbar.update(min(pbar.n + payloadsize, filesize) - pbar.n)
-        self.min_block = ar.Peer().current_block()
+        with tqdm.tqdm(desc='current_block from ' + GATEWAY, leave=False):
+            self.min_block = ar.Peer(GATEWAY).current_block()
 
 
 def main():
