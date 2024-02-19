@@ -6,7 +6,7 @@ from pqdm.threads import pqdm # maybe joblib Parallel verbose=True instead
 
 if len(sys.argv) > 1:
     fetchid = sys.argv[1]
-    fetchid_text = requests.get(f'https://ar-io.net/{fetchid}').text
+    fetchid_text = requests.get(f'https://permagate.io/{fetchid}').text
 #    fastest_time = float('inf')
 #    fastest_url = None
 else:
