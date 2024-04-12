@@ -137,7 +137,7 @@ class HTTPClient:
     # _get and _post should just call a _request function to share code
     def _request(self, *params, **request_kwparams):
         if len(params) and params[-1][0] == '?':
-            url = self.api_url + '/' + '/'.join(params[:-1]) + params[1]
+            url = self.api_url + '/' + '/'.join(params[:-1]) + params[-1]
         else:
             url = self.api_url + '/' + '/'.join(params)
 
