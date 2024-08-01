@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-from ar import DEFAULT_GATEWAY_ADDRESS_REGISTRY_CACHE
+from ar.gateways import fetch_from_registry
 import requests
 import sys, time
 from pqdm.threads import pqdm # maybe joblib Parallel verbose=True instead
@@ -24,8 +24,7 @@ def measure_entry(entry):
     else:
         entry['duration'] = time.time() - start
 
-def process_entry(id, entry):
-    entry['id'] = id
+def process_entry(entry):
     settings = entry['settings']
     protoport = [settings['protocol'], settings['port']]
     if protoport in [['http',80],['https',443]]:
@@ -37,10 +36,8 @@ def process_entry(id, entry):
         measure_entry(entry)
     return entry
 
-cache = requests.get(DEFAULT_GATEWAY_ADDRESS_REGISTRY_CACHE).json()
 gws = pqdm(
-    cache['gateways'].items(), process_entry, argument_type='args',
-    n_jobs=32,
+    fetch_from_registry(raw=True), process_entry, n_jobs=32,
     unit='gw', leave=False, desc='measuring',
 )
 if fetchid is not None:
@@ -50,4 +47,6 @@ if fetchid is not None:
         print(url)
 else:
     for gw in gws:
+        if isinstance(gw, Exception):
+            raise gw
         print(gw['url'])
