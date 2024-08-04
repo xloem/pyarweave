@@ -143,9 +143,9 @@ def update_all():
         except (ValueError, OSError):
             bad.append(url)
     time_urls.sort()
-    TIMES = [time_url[0] for time_url in time_urls]
-    GOOD = [time_url[1] for time_url in time_urls]
-    BAD = bad
+    TIMES[:] = [time_url[0] for time_url in time_urls]
+    GOOD[:] = [time_url[1] for time_url in time_urls]
+    BAD[:] = bad
     write()
 
 def write():
