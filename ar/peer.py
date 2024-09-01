@@ -157,12 +157,24 @@ class HTTPClient:
                 finally:
                     self.outgoing_connection_semaphore.release()
 
-                if response.status_code == 400:
+                if response.headers.get('content-type','').startswith('application/json') or response.status_code == 400:
+                    # 'errors': # example from graphql
+                    #   [{
+                    #     'message':str,
+                    #     'locations':[{'line':int, 'column':int}],
+                    #     'path': ['transactions'],
+                    #     'extensions': {'code': 'INTERNAL_SERVER_ERROR'}
+                    #   }]
                     try:
-                        msg = response.json()['error']
+                        msg = response.json()
                     except:
-                        msg = response.text
-                    raise ArweaveException(msg)
+                        pass
+                    else:
+                        msg = msg.get('error',msg.get('errors'))
+                        if msg is not None:
+                            raise ArweaveException(msg)
+                if response.status_code == 400:
+                    raise ArweaveException(response.text)
 
                 response.raise_for_status()
                 if int(response.headers.get('content-length', 1)) == 0:
