@@ -1,0 +1,18 @@
+#!/usr/bin/env python3
+
+import os, sys
+import ar
+
+def generate_keys(*filenames):
+    for filename in filenames:
+        if os.path.exists(filename):
+            wallet = ar.Wallet(jwk_file=filename)
+            print(filename, 'already_exists', wallet.address, file=sys.stderr)
+        else:
+            wallet = ar.Wallet.generate(jwk_file=filename)
+            print(filename, '->', wallet.address, file=sys.stderr)
+
+if __name__ == '__main__':
+    generate_keys(*sys.argv[1:])
+
+
