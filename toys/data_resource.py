@@ -146,6 +146,7 @@ class Lock:
         self.locking_tagname = locking_tagname
         self.expected_completion_time_tagname = expected_completion_time_tagname
         self.expiry_timeout_tagname = expiry_timeout_tagname
+        self._lock_tx = None
 
     # yields txs that presently hold this lock
     # or empty sequence if the lock is open
@@ -185,8 +186,8 @@ class Lock:
             if len(locking):
                 last_txid = locking[-1]['id']
                 locking.clear()
-            poll_instances -= 1
-            time.sleep(poll_seconds)
+            _poll_instances -= 1
+            time.sleep(_poll_seconds)
     # returns a list of txs that presently hold this lock
     # or empty list if the lock is open
     def query(self, now=None, **arguments):
@@ -257,6 +258,9 @@ class Lock:
 #                # thinking a litle on notifying
 #                # maybe an expected poll time would help to share too
     def use(self):
+        if self._lock_tx is None or self._lock_tx['tags'][self.action_tagname] != self.locked_action:
+            # not in a locked context
+            raise KeyError('lock used without being held')
         if utctime() >= float(self._lock_tx['tags'][self.expiry_timeout_tagname]):
             # lost lock
             #return self.lock()
@@ -326,7 +330,8 @@ class DataResource:
         self.lock.unlock()
     def latest(self, **tags):
         tx = self.seq.get(tags=dict(type=dict(values=['meta'],op=NEQ), **tags))
-        tx['stream'] = self.seq.peer.gateway_stream(tx['id'])
+        if tx is not None:
+            tx['stream'] = self.seq.peer.gateway_stream(tx['id'])
         return tx
 
 #
