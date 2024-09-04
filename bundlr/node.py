@@ -3,7 +3,9 @@ from ar.peer import HTTPClient
 
 DEFAULT_API_URL = 'https://node2.bundlr.network'
 DEFAULT_CHAIN = 'arweave'
-DEFAULT_API_URL_FINGERPRINT = 'e55fec18e416f39d0edf7807534257a188c7ec4cdd3d0d6de17eb3051a4e084c'
+import warnings
+warnings.warn('disabled bundlr fingerprint verification, update with new fingerprint from certificate transparency')
+DEFAULT_API_URL_FINGERPRINT = None#'e55fec18e416f39d0edf7807534257a188c7ec4cdd3d0d6de17eb3051a4e084c'
 
 class Node(HTTPClient):
     def __init__(self, api_url = DEFAULT_API_URL, timeout = None, retries = 5, outgoing_connections = 100, requests_per_period = 10000, period_sec = 60, cert_fingerprint = DEFAULT_API_URL_FINGERPRINT):
@@ -62,6 +64,7 @@ class Node(HTTPClient):
         try:
             return response.json()
         except Exception as exc:
+            # response.status_code == 201 indicates the tx is already held
             raise ArweaveNetworkException(response.text, response.status_code, exc, response)
 
     def send_chunks(self, databytes, txid, offset, currency = DEFAULT_CHAIN):

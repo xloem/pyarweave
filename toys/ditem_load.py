@@ -17,6 +17,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import argparse
+import hashlib
 import io
 import sys
 import os
@@ -26,12 +27,14 @@ import yarl39
 import ar, bundlr
 import tqdm
 
-GATEWAY='https://baristestnet.xyz'
+#GATEWAY='https://baristestnet.xyz'
+GATEWAY='https://arweave.net'
 
 # T_T we made it so near. it could become useful soon :)
 class Sender:
     def __init__(self, key):
         self.signing = AcceleratedSigner(ar.DataItem(), key)
+        self.signing2 = AcceleratedSigner(ar.DataItem(), key)
         self.headersize = len(self.signing.header(b''))
         bufsize = 102400
         self.payloadsize = bufsize - self.headersize
@@ -40,17 +43,30 @@ class Sender:
         self.headerview = self.bufview[:self.headersize]
         self.dataview  = self.bufview[self.headersize:]
         node = bundlr.Node()
-        def send_tx(*params, **kwparams):
+        def send_tx(transaction_bytes, *params, **kwparams):
             while True:
                 try:
-                    return node.send_tx(*params, **kwparams)
+                    result = node.send_tx(transaction_bytes, *params, **kwparams)
                 except ar.ArweaveNetworkException as e:
                     print(e, file=sys.stderr)
+                    if e.args[1] == 201: # already received, but no receipt provided
+                        if type(transaction_bytes) is bytes:
+                            transaction_bytes = bytearray(transaction_bytes)
+                        transaction_bytes[:self.headersize] = self.signing2.header(transaction_bytes[self.headersize:])
                     continue
+                else:
+                    ## sent, verify it is correct
+                    #txid = result['id']
+                    #data = ar.Peer().gateway_stream(txid).read()
+                    #if data != transaction_bytes[self.headersize:]:
+                    #    print('upload did not succeed')
+                    #    print('upload did not succeed')
+                    #    #import pdb; pdb.set_trace()
+                    return result
         self.send_tx = send_tx #bundlr.Node().send_tx
         with tqdm.tqdm(desc='current_block from ' + GATEWAY, leave=False):
             self.min_block = ar.Peer(GATEWAY).current_block()
-    def push(self, stream, filesize):
+    def push(self, stream, filesize, *digests):
         signing = self.signing
         headersize = self.headersize
         payloadsize = self.payloadsize
@@ -60,7 +76,11 @@ class Sender:
         read = stream.readinto
         remaining_bytes = filesize
         remaining_chunks = (filesize - 1) // payloadsize + 1
-        pump = yarl39.SyncThreadPump(self.send_tx, size_per_period=None, period_secs=60)
+        pump = yarl39.SyncThreadPump(
+            self.send_tx,
+            size_per_period=None,#512*1024*1,#None, # maybe output something if this is not None so user understands there is a speed cap
+            period_secs=1,
+        )
         feed = pump.feed
         header = signing.header
         #n_hash_updates = len(hash_updates)
@@ -70,6 +90,7 @@ class Sender:
                 data = dataview[:bytes_read]
                 headerview[:] = header(data)
                 feed(bytes_read, bufview[:headersize+bytes_read].tobytes())
+                [digest.update(data) for digest in digests]
                 #for idx in range(n_hash_updates):
                 #    hash_updates[idx](data)
                 remaining_bytes -= bytes_read
@@ -93,6 +114,11 @@ def main():
         type=argparse.FileType('rb', bufsize=0),
         help='The name of the file to push'
     )
+    parser.add_argument(
+        '--size',
+        type=int,
+        help='The size at which to stop reading the file',
+    )
     args = parser.parse_args()
 
     if not os.path.exists(args.wallet):
@@ -101,7 +127,7 @@ def main():
     else:
         wallet = ar.Wallet(args.wallet)
     stream = args.file
-    size = os.stat(stream.name).st_size
+    size = args.size or os.stat(stream.name).st_size
     ct = 2
     sender = Sender(wallet.rsa)
     fields = {
@@ -112,10 +138,17 @@ def main():
     }
     fields['name'] = os.path.basename(stream.name)
     while ct > 1:
+        digests = {
+            '_blake2b': hashlib.blake2b(),
+            '_sha256': hashlib.sha256(),
+        }
         ct = 0
         nextstream = io.TextIOWrapper(io.BytesIO())
-        for result in sender.push(stream, size):
+        off = 0
+        for result in sender.push(stream, size, *digests.values()):
             result.update(fields)
+            result['off'] = off
+            off += sender.payloadsize
             json.dump(result, nextstream)
             nextstream.write('\n')
             ct += 1
@@ -127,6 +160,8 @@ def main():
         fields['depth'] = fields.get('depth',1) + 1
         fields['start_height'] = sender.min_block['height']
         fields['start_block'] = sender.min_block['indep_hash']
+        for digest_name, digest_object in digests.items():
+            fields[digest_name] = digest_object.hexdigest()
     print(stream.read().decode())
 
     args.file.close()

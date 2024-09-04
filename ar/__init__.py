@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 from ar.gateways import GOOD as PUBLIC_GATEWAYS
 
-DEFAULT_API_URL = PUBLIC_GATEWAYS[0]
+DEFAULT_API_URL = PUBLIC_GATEWAYS[0] if len(PUBLIC_GATEWAYS) else 'https://arweave.net/'
 
 DEFAULT_HTTP_IFACE_PORT = 1984
 
