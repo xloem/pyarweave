@@ -1,25 +1,52 @@
 import io, ar
 import yarl39
 import json, tqdm
-import bisect, itertools
+import bisect, itertools, threading, queue
 import lru_idx_data_cache
+
+class LoadBalancer:
+    def __init__(self, servers):
+        self._servers = servers
+        self._uses = [[0,idx] for idx in range(len(servers))]
+        self._lock = threading.Lock()
+    @property
+    def servers(self):
+        return list(self._servers)
+    def use(self):
+        return self.Selection(self)
+    class Selection:
+        def __init__(self, balancer):
+            self.balancer = balancer
+        def __enter__(self):
+            with self.balancer._lock:
+                self.balancer._uses.sort()
+                self._selection = self.balancer._uses[0]
+                self._selection[0] += 1
+            return self.balancer._servers[self._selection[1]]
+        def __exit__(self, *params):
+            with self.balancer._lock:
+                self._selection[0] -= 1
+        @staticmethod
+        def _sort_key(entry):
+            return entry[0]
 
 class DownStream(io.RawIOBase):
     @classmethod
-    def from_file(cls, peer, jsonfn, cachesize=1024*1024*1024):
+    def from_file(cls, good_gws, jsonfn, cachesize=1024*1024*1024):
         with open(jsonfn, 'rb') as jsonfh:
-            return cls(peer, jsonfh).expand()
+            return cls(good_gws, jsonfh).expand()
     def expand(self):
         stream = self
         with tqdm.tqdm(desc=self.name, total=self.depth, unit='depth', leave=False) as pbar:
             pbar.update()
             while stream.depth > 1:
                 with stream:
-                    stream = type(self)(stream.peer, stream, cachesize=self._cache.capacity)
+                    stream = type(self)(stream.gws.servers, stream, cachesize=self._cache.capacity)
                 pbar.update()
         return stream
-    def __init__(self, peer, jsonfh, cachesize=1024*1024*1024):
-        self.peer = peer
+    def __init__(self, good_gws, jsonfh, cachesize=1024*1024*1024):
+        self.gws = LoadBalancer(good_gws)
+        #self.peer = peer
         #self._pump = pump = yarl39.SyncThreadPump(
         self._pump = yarl39.SyncThreadPump(
             #self._data,
@@ -174,11 +201,12 @@ class DownStream(io.RawIOBase):
         return self._pump.__exit__(*params)
 
     def _length(self, txid):
-        return int(self.peer._request(txid, method='HEAD').headers['Content-Length'])
+        with self.gws.use() as gw:
+            return int(gw._request(txid, method='HEAD').headers['Content-Length'])
     def _data(self, txid):
-        # likely much faster to push raw headers to raw sockets here or use libcurl
-        with self.peer.gateway_stream(txid) as stream:
-            return stream.read()
+        # might be faster to push raw headers to raw sockets here or use libcurl
+        with self.gws.use() as gw:
+            return gw._request(txid, method='GET').content
     def _data2(self, idx):
         data = self._data(self._ids[idx])
         #self._cache[idx] = data
@@ -222,17 +250,23 @@ def main():
         'json',
         type=argparse.FileType('rb', bufsize=0),
         help='The jsonl file to download from',
-        default=sys.stdin
     )
+    DEFAULT_GWS = ','.join([
+        ar.gateways.GOOD[idx]
+        for idx in range(2)
+    ])
     parser.add_argument(
-        '--gateway', '-gw',
+        '--gateways', '-gws',
         type=str,
-        help='The arweave gateway to use',
-        default=ar.DEFAULT_API_URL,
+        help='Comma-separated list of gateways to use.\ndefault: ' + DEFAULT_GWS,
+        default=DEFAULT_GWS
     )
     args = parser.parse_args()
 
-    with DownStream(ar.Peer(args.gateway), args.json, 102400*3).expand() as stream:
+    gws = args.gateways.split(',')
+    conns_per_gw = ar.Peer().max_outgoing_connections // len(gws)
+
+    with DownStream([ar.Peer(gw, outgoing_connections=conns_per_gw) for gw in gws], args.json, 102400*3).expand() as stream:
         #print(stream.name, file=sys.stderr)
         with tqdm.tqdm(desc=stream.name, total=stream.size, unit='B', unit_scale=True, smoothing=0) as pbar:
             while True:
