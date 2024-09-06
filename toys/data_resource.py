@@ -1,7 +1,10 @@
-import base64, bisect, datetime, json, math, time
+import base64, bisect, collections, datetime, hashlib, io, json, math, os, threading, time
+import concurrent.futures
 
 import ar
 import tqdm
+
+import ditem_load, ditem_down_stream
 
 # general utils
 def utctime():
@@ -19,9 +22,20 @@ def encode_graphql_arguments(obj,key=None,braces='()'):
         else:
             return json.dumps(obj)
     elif type(obj) is list:
-        return '[' + ','.join([encode_graphql_arguments(val,key,'{}') for val in obj]) + ']'
+        return '[' + ','.join([encode_graphql_arguments(val,key+'[]','{}') for val in obj]) + ']'
     elif type(obj) is dict:
-        return braces[0] + ','.join(key+':'+encode_graphql_arguments(val,key,'{}') for key, val in obj.items() if val is not None) + braces[1]
+        if key == 'tags':
+            obj = [dict(
+                name = name,
+                **{
+                    list: {'values':values},
+                    str: {'values':[values]},
+                    dict: values,
+                }[type(values)]
+            ) for name, values in obj.items()]
+            return encode_graphql_arguments(obj,key)
+        else:
+            return braces[0] + ','.join(key+':'+encode_graphql_arguments(val,key,'{}') for key, val in obj.items() if val is not None) + braces[1]
     else:
         raise ValueError(type(obj), obj)
 #def encode_graphql_queries(obj):
@@ -57,7 +71,7 @@ def iterate_graphql(peer, field:str, arguments:dict, queries:str, continuing_arg
 
 # sequential data
 class Sequence:
-    def __init__(self, peer, arguments, wallet = None, bundlr = None, prev_tagname = 'prev', clock_tagname = 'clock'):
+    def __init__(self, peer, arguments, wallet = None, bundlr = None, prev_tagname = 'prev', clock_tagname = 'clock', **extra_tags):
         self.peer = peer
         #if type(arguments) is dict:
         #    arguments = ','.join(f'{key}:{val}' for key, val in arguments.items())
@@ -66,23 +80,25 @@ class Sequence:
         self.bundlr = bundlr
         self.prev_tagname = prev_tagname
         self.clock_tagname = clock_tagname
-        self.latest = dict(id=None,tags=dict(clock='-1'))
+        self.extra_tags = extra_tags
+        self.latest = dict(id=None,tags=dict(**extra_tags,clock='-1'))
         self.update_latest()
     def iterate(self, _poll_seconds=1, _poll_instances=0, **arguments):
         arguments.setdefault('sort', 'HEIGHT_DESC')
-        if type(arguments.get('tags')) is dict:
-            arguments['tags'] = [dict(
-                name = name,
-                **{
-                    list: {'values':values},
-                    str: {'values':[values]},
-                    dict: values,
-                }[type(values)]
-            ) for name, values in arguments['tags'].items()]
+        arguments['tags'] = {**self.arguments.get('tags',{}),**arguments.get('tags',{})}
+        #if type(arguments.get('tags')) is dict:
+        #    arguments['tags'] = [dict(
+        #        name = name,
+        #        **{
+        #            list: {'values':values},
+        #            str: {'values':[values]},
+        #            dict: values,
+        #        }[type(values)]
+        #    ) for name, values in arguments['tags'].items()]
         reverse = -1 if arguments['sort'] == 'HEIGHT_DESC' else 1
         #arguments = ','.join(f'{key}:{val}' for key, val in arguments.items())
-        block_entries = []
         for poll_instances in [0, _poll_instances]:
+            block_entries = []
             last = None
             for idx, tx in enumerate(iterate_graphql(
                 self.peer, 'transactions',
@@ -92,6 +108,8 @@ class Sequence:
                 poll_instances = poll_instances,
             )):
                 tx['tags'] = {tag['name']:tag['value'] for tag in tx['tags']}
+                if last and tx['id'] == last['id']:
+                    break
                 last = tx
                 if len(block_entries) and tx['block'] != block_entries[0]['block']:
                     yield from block_entries
@@ -106,14 +124,36 @@ class Sequence:
         for tx in self.iterate(**arguments):
             #print('get', tx)
             return tx
+    #def get_enforce_not_multiple(self, **arguments):
+    #    tx = None
+    #    for _tx in self.iterate(**arguments):
+    #        #print('get', tx)
+    #        if tx is not None:
+    #            raise ValueError('>1 item matched', self, arguments)
+    #        tx = _tx
+    #    else:
+    #        return tx
+    def __getitem__(self, clock):
+        tx = None
+        for _tx in self.iterate(tags={self.clock_tagname:str(clock)}):
+            if tx is not None:
+                raise ValueError('>1 tx', self.clock_tagname, clock, self)
+            tx = _tx
+        if tx is None:
+            raise KeyError('clock not found', self.clock_tagname, clock, self)
+        return tx
+    def __len__(self):
+        return int(self.latest['tags'][self.clock_tagname]) + 1
     def update_latest(self):
         self.latest = self.get() or self.latest
         return self.latest
-    def post(self, data, **tags):
+    def post(self, data, **post_tags):
         if data is None:
             data = b''
         elif type(data) is str:
             data = data.encode()
+        tags = dict(self.extra_tags)
+        tags.update(post_tags)
         di = ar.DataItem(data = data)
         assert self.clock_tagname not in tags
         assert self.prev_tagname not in tags
@@ -131,7 +171,7 @@ class Sequence:
             tags = tags
         )
         self.latest = tx
-        print('sent', self.latest)
+        print('sent', self.latest, result)
         #    # what about race conditions locking
         return tx
 
@@ -312,27 +352,115 @@ class DataResource:
                 import bundlr
                 bundlr = bundlr.Node()
             address = wallet.address
-        self.seq = Sequence(peer, dict(owners=[address]), wallet, bundlr)
-        self.lock = Lock(self.seq)
+        self.seq = Sequence(peer, dict(owners=[address],tags=dict(seq='data')), wallet, bundlr, seq='data')
+        self.seq_lock = threading.Lock()
+        self.lock = Lock(Sequence(peer, dict(owners=[address],tags=dict(seq='lock')), wallet, bundlr, seq='lock'))
         self.lock_params = dict(
             poll_time = poll_time,
             expected_completion_time = expected_completion_time,
             expiry_timeout_time = timeout
         )
+        self.pool = concurrent.futures.ThreadPoolExecutor()
+        self._post_queue = collections.deque()
     def store(self, data, **tags):
+        if type(data) is str:
+            data = data.encode()
+        if type(data) is bytes:
+            size = len(data)
+            data = io.BytesIO(data)
+        else:
+            size = os.stat(data.name).st_size
         self.lock.use()
-        return self.seq.post(data, type='data', **tags)
+        can_post_event = threading.Event()
+        with self.seq_lock:
+            if len(self._post_queue) == 0:
+                can_post_event.set()
+            self._post_queue.append(can_post_event)
+        fut = self.pool.submit(self._store, can_post_event, data, size, tags)
+        def fut_done(fut):
+            with self.seq_lock:
+                assert self._post_queue[0] is can_post_event
+                assert self._post_queue.popleft() is can_post_event
+                if len(self._post_queue):
+                    self._post_queue[0].set()
+        fut.add_done_callback(fut_done)
+        return fut
     def __enter__(self):
-        self.lock.lock(type='meta', **self.lock_params)
+        self.lock.lock(**self.lock_params)
         self.seq.update_latest()
+        self.pool.__enter__()
         return self
     def __exit__(self, *params):
+        self.pool.__exit__(*params)
         self.lock.unlock()
+    def __getitem__(self, clock):
+        return self._get(self.seq[clock])
+    def __len__(self):
+        return len(self.seq)
     def latest(self, **tags):
-        tx = self.seq.get(tags=dict(type=dict(values=['meta'],op=NEQ), **tags))
-        if tx is not None:
-            tx['stream'] = self.seq.peer.gateway_stream(tx['id'])
+        return self._get(self.seq.latest)
+
+    def _get(self, tx):
+        if tx is None or tx['id'] is None:
+            return None
+        try:
+            tx_stream = self.seq.peer.gateway_stream(tx['id']) # self.seq.peer.data
+        except ar.ArweaveNetworkException as exc:
+            if exc.args[1] == 404: # sent to private graphql endpoint but not processed yet
+                tx_stream = self.seq.bundlr.stream(tx['id'])
+            else:
+                raise
+        gws = [self.seq.peer]
+        tx['stream'] = ditem_down_stream.DownStream(gws, tx_stream, cachesize=1024*1024*1024, bundlrs=[self.seq.bundlr]).expand()
         return tx
+    def _store(self, can_post_event, stream, size, tags):
+        tags_dict = tags
+        tags = [dict(name='seq',value='ditem')] + [dict(name=name,value=value) for name, value in tags.items()]
+        sender = ditem_load.Sender(self.seq.wallet.rsa, tags=tags)
+        fields = dict(
+            size = size,
+            name = self.seq.wallet.address + ':' + self.seq.latest['tags']['clock']
+        )
+        ct = 2
+        while ct > 1:
+            digests = dict(_blake2b = hashlib.blake2b(),_sha256=hashlib.sha256())
+            ct = 0
+            nextstream = io.TextIOWrapper(io.BytesIO())
+            off = 0
+            fields['start_height'] = sender.min_block['height']
+            fields['start_block'] = sender.min_block['indep_hash']
+            for result in sender.push(stream, size, *digests.values()):
+                result.update(fields)
+                result['off'] = off
+                off += sender.payloadsize
+                json.dump(result, nextstream)
+                nextstream.write('\n')
+                ct += 1
+            nextstream.flush()
+            stream = nextstream.buffer
+            size = stream.tell()
+            stream.seek(0)
+            fields['depth'] = fields.get('depth',1) + 1
+            for digest_name, digest_object in digests.items():
+                fields[digest_name] = digest_object.hexdigest()
+        self.lock.use()
+        #post_fut.set_result([stream.read(), **tags_dict])
+        #posted_condition.wait_for(lambda: self._post_queue[0] is posted_condition)
+
+        #while True:
+        #    with self.seq_lock:
+        #        next_posted = self._post_queue[0]
+        #    if next_posted is posted_event:
+        #        break
+        #    else:
+        #        next_posted.wait()
+
+        can_post_event.wait()
+        #print('got can post event', can_post_event)
+        self.lock.use()
+        result = self.seq.post(stream.read(), **tags_dict)
+        #print('posted', can_post_event, result['id'])
+        return result
 
 #
 #    # we could optionally implement a network lock here for multiprocess synchronisation.
@@ -342,15 +470,21 @@ class DataResource:
 if __name__ == '__main__':
     dr = DataResource('test.json')
     latest = dr.latest()
-    with latest['stream'] as stream:
+    if latest is not None:
         print(latest)
-        print(stream.read())
+        with latest['stream'] as stream:
+            print(stream.read())
     with dr:
-        dr.store('Hello world', tagname='tagvalue')
-        dr.store('Hello world', tagname='tagvalue')
-        dr.store('Hello world', tagname='tagvalue')
+        one = dr.store('Hello world-1', tagname='tagvalue')
+        print(one.result())
+        two = dr.store('Hello world-2', tagname='tagvalue')
+        three = dr.store('Hello world-3', tagname='tagvalue')
     latest = dr.latest()
     with latest['stream'] as stream:
         print(latest)
         print(stream.read())
+    for idx in range(len(dr)-1,-1,-1):
+        print(idx, dr[idx])
+        with dr[idx]['stream'] as stream:
+            print(stream.read())
     #print(dr.update_latest())

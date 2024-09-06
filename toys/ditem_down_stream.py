@@ -32,50 +32,26 @@ class LoadBalancer:
 
 class DownStream(io.RawIOBase):
     @classmethod
-    def from_file(cls, good_gws, jsonfn, cachesize=1024*1024*1024):
+    def from_file(cls, good_gws, jsonfn, cachesize=1024*1024*1024, bundlrs=[]):
         with open(jsonfn, 'rb') as jsonfh:
-            return cls(good_gws, jsonfh).expand()
+            return cls(good_gws, jsonfh, cachesize=cachesize, bundlrs=bundlrs).expand()
     def expand(self):
         stream = self
         with tqdm.tqdm(desc=self.name, total=self.depth, unit='depth', leave=False) as pbar:
             pbar.update()
             while stream.depth > 1:
                 with stream:
-                    stream = type(self)(stream.gws.servers, stream, cachesize=self._cache.capacity)
+                    stream = type(self)(stream.gws.servers, stream, cachesize=self._cache.capacity, bundlrs=self._bundlrs)
                 pbar.update()
         return stream
-    def __init__(self, good_gws, jsonfh, cachesize=1024*1024*1024):
+    def __init__(self, good_gws, jsonfh, cachesize=1024*1024*1024, bundlrs=[]):
         self.gws = LoadBalancer(good_gws)
-        #self.peer = peer
-        #self._pump = pump = yarl39.SyncThreadPump(
+        self._bundlrs = bundlrs
         self._pump = yarl39.SyncThreadPump(
-            #self._data,
             self._data2,
-            #None,
             size_per_period=None,
             period_secs=1,
         )
-        #feed = self._pump.feed
-        ## first fetch all the indices # now done using this very class
-        #jsonfh = io.BytesIO(jsonl)
-        #while True:
-        #    ct = 0
-        #    jsonbin = jsonfh.readline()
-        #    while jsonbin:
-        #        ct += 1
-        #        jsondoc = json.loads(jsonbin)
-        #        feed(chunksize, jsondoc['id'])
-        #        jsonbin = jsonfh.readline()
-        #    depth = jsondoc['depth']
-        #    size = jsondoc['size']
-        #    name = jsondoc['name']
-        #    jsonfh.seek(0)
-        #    for chunk in pump.fetch(ct):
-        #        jsonfh.write(chunk)
-        #    jsonfh.truncate()
-        #    jsonfh.seek(0)
-        #    if jsondoc['depth'] == 2:
-        #        break
         self._ids = []
         self._offsets = []
         for line in jsonfh.readlines():
@@ -84,28 +60,8 @@ class DownStream(io.RawIOBase):
                 jsondoc = json.loads(line)
                 self._ids.append(jsondoc['id'])
                 self._offsets.append(jsondoc['off'])
-        ##self._ids = [json.load(line)['id'] for line in jsonfh.readlines()]
-        #self._offsets = [None] * len(self._ids)
-        ##self._offsets = [idx * chunksize for idx in range(len(self._ids))]
-        #self._offsets[0] = 0
-        #pump.send = self._length
-        #with tqdm.tqdm(desc='indexing',leave=False,total=len(self._ids)*2) as pbar, yarl39.SyncThreadPump(self._length,size_per_period=None) as pump:
-        #    for id in self._ids:
-        #        pump.feed(2048, id)
-        #        pbar.update()
-        #    self._offsets = [0] + list(itertools.accumulate(
-        #        [length,pbar.update()][0] for length in pump.fetch(len(self._ids))
-        #    ))
-        #if len(self._offsets) > 1:
-        #    self._unk_offset_range = [1,len(self._offsets)-1]
-        #else:
-        #    self._unk_offset_range = [None,None]
         self._cache = lru_idx_data_cache.Cache(cachesize, len(self._ids))
-        #self._cache = [None for idx in range(len(self._ids))]
-        #pump.send = self._data2
-        #self.name = name
         self.offset = 0
-        #self.size = size
         self.depth = jsondoc.get('depth',1)
         if self.depth == 1:
             assert jsondoc['size'] == self._offsets[-1] + self._length(self._ids[-1])
@@ -201,12 +157,31 @@ class DownStream(io.RawIOBase):
         return self._pump.__exit__(*params)
 
     def _length(self, txid):
-        with self.gws.use() as gw:
-            return int(gw._request(txid, method='HEAD').headers['Content-Length'])
+        try:
+            with self.gws.use() as gw:
+                return int(gw._request(txid, method='HEAD').headers['Content-Length'])
+        except ar.ArweaveNetworkException as exc:
+            # this is in the graphql too i think
+            if exc.args[1] == 404 and len(self._bundlrs):
+                for bundlr in self._bundlrs:
+                    try:
+                        return int(bundlr._request('tx', txid, 'data', method='HEAD').headers['Content-Length'])
+                    except Exception as exc2:
+                        bundlr_exception = exc2 # just in case debugging and helpful to use variable name
+            raise
     def _data(self, txid):
         # might be faster to push raw headers to raw sockets here or use libcurl
-        with self.gws.use() as gw:
-            return gw._request(txid, method='GET').content
+        try:
+            with self.gws.use() as gw:
+                return gw._request(txid, method='GET').content
+        except ar.ArweaveNetworkException as exc:
+            if exc.args[1] == 404 and len(self._bundlrs):
+                for bundlr in self._bundlrs:
+                    try:
+                        return bundlr.data(txid)
+                    except Exception as exc2:
+                        bundlr_exception = exc2 # just in case debugging and helpful to use variable name
+            raise
     def _data2(self, idx):
         data = self._data(self._ids[idx])
         #self._cache[idx] = data
@@ -253,20 +228,28 @@ def main():
     )
     DEFAULT_GWS = ','.join([
         ar.gateways.GOOD[idx]
-        for idx in range(2)
+        for idx in range(32)
     ])
     parser.add_argument(
         '--gateways', '-gws',
         type=str,
-        help='Comma-separated list of gateways to use.\ndefault: ' + DEFAULT_GWS,
+        help='Comma-separated list of gateways to use, or an integer count. default: "' + DEFAULT_GWS + '"',
         default=DEFAULT_GWS
     )
     args = parser.parse_args()
 
+    if args.gateways.isdecimal():
+        num_gws = int(args.gateways)
+        ar.gateways.update_best(num_gws)
+        ar.gateways.fetch_and_update_new()
+        args.gateways = ','.join([
+            ar.gateways.GOOD[idx]
+            for idx in range(num_gws)
+        ])
     gws = args.gateways.split(',')
     conns_per_gw = ar.Peer().max_outgoing_connections // len(gws)
 
-    with DownStream([ar.Peer(gw, outgoing_connections=conns_per_gw) for gw in gws], args.json, 102400*3).expand() as stream:
+    with DownStream([ar.Peer(gw, outgoing_connections=conns_per_gw, requests_per_period = None) for gw in gws], args.json, cachesize=102400*3).expand() as stream:
         #print(stream.name, file=sys.stderr)
         with tqdm.tqdm(desc=stream.name, total=stream.size, unit='B', unit_scale=True, smoothing=0) as pbar:
             while True:

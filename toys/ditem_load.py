@@ -19,9 +19,10 @@
 import argparse
 import hashlib
 import io
-import sys
-import os
 import json
+import os
+import sys
+import threading
 from accelerated_ditem_signing import AcceleratedSigner
 import yarl39
 import ar, bundlr
@@ -32,9 +33,9 @@ GATEWAY='https://arweave.net'
 
 # T_T we made it so near. it could become useful soon :)
 class Sender:
-    def __init__(self, key):
-        self.signing = AcceleratedSigner(ar.DataItem(), key)
-        self.signing2 = AcceleratedSigner(ar.DataItem(), key)
+    def __init__(self, key, *ditem_header_params, **ditem_header_kwparams):
+        self.signing = AcceleratedSigner(ar.DataItem(ar.ANS104DataItemHeader(*ditem_header_params, **ditem_header_kwparams)), key)
+        self.signing2 = AcceleratedSigner(ar.DataItem(ar.ANS104DataItemHeader(*ditem_header_params, **ditem_header_kwparams)), key)
         self.headersize = len(self.signing.header(b''))
         bufsize = 102400
         self.payloadsize = bufsize - self.headersize
@@ -119,6 +120,11 @@ def main():
         type=int,
         help='The size at which to stop reading the file',
     )
+    parser.add_argument(
+        '--update',
+        type=argparse.FileType('r+b', bufsize=0),
+        help='A pre-existing ditem_load json to update or fix.',
+    )
     args = parser.parse_args()
 
     if not os.path.exists(args.wallet):
@@ -128,15 +134,197 @@ def main():
         wallet = ar.Wallet(args.wallet)
     stream = args.file
     size = args.size or os.stat(stream.name).st_size
-    ct = 2
+    if args.update:
+        import ditem_down_stream
+        num_gws = 4
+        cachesize = 1024*1024*1024
+        conns_per_gw = ar.Peer().max_outgoing_connections // num_gws
+        gws = [
+            ar.Peer(
+                gw,
+                outgoing_connections=conns_per_gw,
+                requests_per_period=None,
+            ) for gw in ar.gateways.GOOD[:num_gws]
+        ]
+        original = ditem_down_stream.DownStream(gws, args.update, cachesize=cachesize)
+        while original.depth > 2:
+            with original:
+                original = ditem_down_stream.DownStream(gws, original, cachesize=cachesize)
+        with original:
+            jsondocs = []
+            ids = []
+            gw_idx = 0
+            new_index = io.BytesIO()
+            found_difference = False
+            bundles = {}
+            # so each stream might come from a different gw
+            # or we could associate streams with gws
+            bundles_lock = threading.Lock()
+            def get_ditem_offset(jsondoc, gql_doc):#bundle_id, ditem_id):
+                bundle_id = gql_doc['bundledIn']['id']
+                ditem_id = gql_doc['id']
+                with original.gws.use() as gw:
+                    bundle_info = bundles.get(bundle_id)
+                    bundle_stream = None
+                    if bundle_info is None:
+                        with bundles_lock:
+                            bundle_info = bundles.get(bundle_id)
+                            if bundle_info is None:
+                                bundle_offset = gw.tx_offset(bundle_id)
+                                # it could be helpful to reuse the stream, but i guess i will try this first
+                                #bundle_stream = io.BufferedReader(ar.stream.PeerStream.from_tx_offset(gw, bundle_offset))
+                                bundle_stream = ar.stream.GatewayStream.from_txid(gw, bundle_id)
+                                with bundle_stream:
+                                    bundle_header = ar.bundle.ANS104BundleHeader.fromstream(bundle_stream)
+                                bundle_info = [
+                                    bundle_offset,
+                                    #{
+                                    #    gw.api_url: bundle_stream
+                                    #},
+                                    bundle_header,
+                                    #threading.Lock()
+                                ]
+                                bundles[bundle_id] = bundle_info
+                    #bundle_offset, bundle_streams, bundle_header, bundle_lock = bundle_info
+                    bundle_offset, bundle_header = bundle_info
+                    ditem_start, ditem_end = bundle_header.get_range(ditem_id)
+                    #bundle_stream = bundle_streams.get(gw.api_url)
+                    #if bundle_stream is None:
+                    #    with bundle_lock:
+                    #        bundle_stream = bundle_streams.get(gw.api_url)
+                    #        if bundle_stream is None:
+                    #            bundle_stream = io.BufferedReader(ar.stream.PeerStream.from_tx_offset(gw, bundle_offset))
+                    #            bundle_streams[gw.api_url] = bundle_stream
+                    #if bundle_stream is None:
+                    #    bundle_stream = io.BufferedReader(ar.stream.PeerStream.from_tx_offset(gw, bundle_offset))
+                    #bundle_stream.seek(ditem_start)
+                    bundle_stream = io.BufferedReader(ar.stream.GatewayStream.from_txid(gw, bundle_id, ditem_start, ditem_end - ditem_start))
+                    with bundle_stream:
+                        ditem_header = ar.bundle.ANS104DataItemHeader.fromstream(bundle_stream)
+                data_start = bundle_stream.tell()
+                return [jsondoc, gql_doc, {
+                    'tx': bundle_offset,
+                    'data': data_start,
+                    'head': ditem_start - data_start,
+                    'size': ditem_end - data_start,
+                }]
+            ditem_offset_pump = yarl39.SyncThreadPump(
+                get_ditem_offset, size_per_period=None
+            )
+            with ditem_offset_pump:
+                with tqdm.tqdm(desc='indexing', total=original.size, unit='B', unit_scale=True, leave=False) as pbar:
+                    while original.offset < original.size:
+                        jsonline = original.readline()
+                        jsondoc = json.loads(jsonline)
+                        jsondocs.append(jsondoc)
+                        ids.append(jsondoc['id'])
+                        if original.offset == original.size or len(ids) == 100: # cloudfront has a post limit of 20kb but graphql has a result limit of 100 items
+                            while True:
+                                gql_results = gws[gw_idx].graphql('query{transactions(first:'+str(len(ids))+',ids:'+json.dumps(ids,separators=',:')+'){edges{node{id block{id height}bundledIn{id}}}}}')
+                                gql_results = gql_results['data']['transactions']['edges']
+                                if gql_results:
+                                    break
+                                else:
+                                    gw_idx += 1
+                            assert len(gql_results) == len(ids)
+                            gql_docs = {
+                                gql_result['node']['id']:gql_result['node']
+                                for gql_result in gql_results
+                            }
+                            for idx in range(len(ids)):
+                                gql_doc = gql_docs[ids[idx]]
+                                assert gql_doc['id'] == ids[idx]
+                                ditem_offset_pump.feed(1,jsondocs[idx],gql_doc)#['bundledIn']['id'], ids[idx])
+                            ids = []
+                            jsondocs = []
+                        pbar.update(original.offset - pbar.n)
+                total = ditem_offset_pump.fetch_count()
+                for idx, ditem_info in enumerate(tqdm.tqdm(ditem_offset_pump.fetch(total), total=total, desc='looking up ditems', unit='ditem', leave=False)):
+                #for idx in tqdm.tqdm(range(len(ids)), desc='looking up', unit='ditem', leave=False):
+                    old_doc, gql_doc, ditem_offset = ditem_info
+                    #old_doc = jsondocs[idx]
+                    #gql_doc = gql_docs[ids[idx]]
+                    bundle_id = gql_doc['bundledIn']['id']
+                    #bundle_info = bundles.get(bundle_id)
+                    #if bundle_info is None:
+                    #    bundle_offset = gws[gw_idx].tx_offset(bundle_id)
+                    #    bundle_stream = io.BufferedReader(ar.stream.PeerStream.from_tx_offset(gws[gw_idx], bundle_offset))
+                    #    bundle_header = ar.bundle.ANS104BundleHeader.fromstream(bundle_stream)
+                    #    bundles[bundle_id] = [bundle_offset, bundle_stream, bundle_header]
+                    #else:
+                    #    bundle_offset, bundle_stream, bundle_header = bundle_info
+                    #ditem_start, ditem_end = bundle_header.get_range(ids[idx])
+                    #bundle_stream.seek(ditem_start)
+                    #ditem_header = ar.bundle.ANS104DataItemHeader.fromstream(bundle_stream)
+                    #data_start = bundle_stream.tell()
+                    new_doc = {
+                        'id': old_doc['id'],
+                        'timestamp': old_doc['timestamp'],
+                        'name': old_doc['name'],
+                        'size': old_doc['size'],
+                        **{
+                            key: val
+                            for key, val in old_doc.items()
+                            if key[0] == '_'
+                        },
+                        'bundle': {
+                            'id': gql_doc['bundledIn']['id'],
+                            'offset': ditem_offset,
+                            #'offset': {
+                            #    'tx': bundle_offset,
+                            #    'data': data_start,
+                            #    'head': ditem_start - data_start,
+                            #    'size': ditem_end - data_start,
+                            #},
+                            'height': gql_doc['block']['height'],
+                            'block': gql_doc['block']['id'],
+                        },
+                        'off': old_doc['off'],
+                    }
+                    if 'bundle' not in old_doc:
+                        # expected condition, update with block and bundle information
+                        found_difference = True
+                    else:
+                        if old_doc == new_doc:
+                            # expected condition, doc being updated twice, no changes
+                            pass
+                        else:
+                            # i guess we detected a weavefork?
+                            differences = []
+                            for key in set(old_doc)|set(new_doc):
+                                old_val = old_doc.get(key)
+                                new_val = new_doc.get(key)
+                                if old_val != new_val:
+                                    differences.append(f'{key}:old={old_val} new={new_val}')
+                            warnings.warn('weavefork? updated doc differs: ' + ','.join(differences))
+                            found_difference = True
+                    new_index.write(json.dumps(new_doc,separators=',:').encode('utf-8')+b'\n')
+            if not found_difference:
+                print('The new index would be identical to the old index.', file=sys.stderr)
+        fields = dict(
+            name = new_doc['name'],
+            size = new_doc['size'],
+            depth = 2
+        )
+        if 'time' in new_doc:
+            fields['time'] = new_doc['time']
+        assert new_doc['size'] == size
+        stream = new_index
+        assert len(stream) == stream.tell()
+        size = stream.tell()
+        stream.seek(0)
+    else:
+        fields = {
+            'name': os.path.basename(stream.name),
+            'size': size,
+            #'time': int(datetime.datetime.now(datetime.UTC).timestamp())
+        }
     sender = Sender(wallet.rsa)
-    fields = {
-        'name': os.path.basename(stream.name),
-        'size': size,
+    fields.update({
         'start_height': sender.min_block['height'],
         'start_block': sender.min_block['indep_hash'],
-    }
-    fields['name'] = os.path.basename(stream.name)
+    })
+    ct = 2
     while ct > 1:
         digests = {
             '_blake2b': hashlib.blake2b(),
