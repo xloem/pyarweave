@@ -193,12 +193,12 @@ class HTTPClient:
                     # strange ClosedPoolError from urllib3 race condition? https://github.com/urllib3/urllib3/issues/951
                     self._ratelimit_epilogue(False) # to reduce busylooping
                     continue
-                if type(exc) is requests.ReadTimeout:
+                if type(exc) is requests.ReadTimeout or status_code == 404:
                     if status_code == 0:
                         status_code = 598
-                    logger.info('{}\n{}\n\n{}'.format(exc, text, request_kwparams))
+                    logger.info('{}\n{}\n\n{}'.format(type(exc), exc, text, request_kwparams))
                 else:
-                    logger.error('{}\n{}\n\n{}'.format(exc, text, request_kwparams))
+                    logger.error('{}\n{}\n\n{}'.format(type(exc), exc, text, request_kwparams))
                 if status_code == 520:
                     # cloudfront broke
                     self._ratelimit_epilogue(True)
@@ -228,7 +228,8 @@ class HTTPClient:
 
         if type(data) is dict:
             headers.setdefault('Content-Type', 'application/json')
-            data_key = 'json'
+            data_key = 'data'
+            data = json.dumps(data, separators=',:')
         else:
             if isinstance(data, (bytes, bytearray)):
                 headers.setdefault('Content-Type', 'application/octet-stream')
