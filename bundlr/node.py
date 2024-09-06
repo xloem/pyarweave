@@ -1,5 +1,6 @@
 from ar import ArweaveNetworkException
 from ar.peer import HTTPClient
+from ar.stream import GatewayStream
 
 DEFAULT_API_URL = 'https://node2.bundlr.network'
 DEFAULT_CHAIN = 'arweave'
@@ -79,6 +80,18 @@ class Node(HTTPClient):
         response = self._post(None, 'chunks', currency, txid, '-1')
         return response.text
 
-    def data(self, txid):
-        response = self._get('tx', tx_id, 'data')
+    def data(self, txid, range = None):
+        if range is not None:
+            headers = {'Range':f'bytes={range[0]}-{range[1]}'}
+        else:
+            headers = {}
+        response = self._get('tx', txid, 'data', headers = headers)
         return response.content
+
+    def stream(self, txid, range = None):
+        if range is not None:
+            headers = {'Range':f'bytes={range[0]}-{range[1]}'}
+        else:
+            headers = {}
+        response = self._get('tx', txid, 'data', headers = headers, stream = True)
+        return GatewayStream(response)
