@@ -297,19 +297,33 @@ class Lock:
 #
 #                # thinking a litle on notifying
 #                # maybe an expected poll time would help to share too
-    def use(self):
+    def keepalive(self, expiry_timeout_time, expected_completion_time = None, post_seconds = 5, **tags):
+        timeout = utctime() + expiry_timeout_time
+        self.use(post_seconds)
+        assert self._lock_tx['id']
+        self._lock_tx = self.seq.post(None, **{
+            **tags,
+            self.action_tagname: self.locked_action,
+            self.expected_completion_time_tagname:
+                self._lock_tx['tags'][self.expected_completion_time_tagname]
+                    if expected_completion_time is None
+                    else str(expected_completion_time),
+            self.expiry_timeout_tagname: str(timeout),
+            self.locking_tagname: self._locking_tx['id'],
+        })
+    def use(self, seconds = 1):
         if self._lock_tx is None or self._lock_tx['tags'][self.action_tagname] != self.locked_action:
             # not in a locked context
             raise KeyError('lock used without being held')
-        if utctime() >= float(self._lock_tx['tags'][self.expiry_timeout_tagname]):
+        if utctime() + seconds >= float(self._lock_tx['tags'][self.expiry_timeout_tagname]):
             # lost lock
             #return self.lock()
             # raise if timeout has passed
             raise KeyError('lock timed out while locked')
-    def unlock(self):
+    def unlock(self, post_seconds = 5):
         # unlock posted lock
         assert self._lock_tx['tags'][self.action_tagname] == self.locked_action
-        self.use()
+        self.use(post_seconds)
         tags = dict(self._lock_tx['tags'])
         tags.pop(self.seq.prev_tagname)
         tags.pop(self.seq.clock_tagname)
@@ -362,6 +376,7 @@ class DataResource:
         )
         self.pool = concurrent.futures.ThreadPoolExecutor()
         self._post_queue = collections.deque()
+        self._post_time = 0
     def store(self, data, **tags):
         if type(data) is str:
             data = data.encode()
@@ -370,7 +385,7 @@ class DataResource:
             data = io.BytesIO(data)
         else:
             size = os.stat(data.name).st_size
-        self.lock.use()
+        self.lock.use(self._post_time)
         can_post_event = threading.Event()
         with self.seq_lock:
             if len(self._post_queue) == 0:
@@ -387,12 +402,19 @@ class DataResource:
         return fut
     def __enter__(self):
         self.lock.lock(**self.lock_params)
-        self.seq.update_latest()
+        with self._update_post_time():
+            self.seq.update_latest()
         self.pool.__enter__()
         return self
+    def keepalive(self):
+        lock_params = dict(self.lock_params)
+        lock_params.pop('poll_time')
+        self.lock.keepalive(**lock_params,
+            post_seconds=self._post_time,
+        )
     def __exit__(self, *params):
         self.pool.__exit__(*params)
-        self.lock.unlock()
+        self.lock.unlock(post_seconds=self._post_time)
     def __getitem__(self, clock):
         return self._get(self.seq[clock])
     def __len__(self):
@@ -400,6 +422,16 @@ class DataResource:
     def latest(self, **tags):
         return self._get(self.seq.latest)
 
+    def _update_post_time(self):
+        now = utctime()
+        class Ctx:
+            def __enter__(ctx):
+                return self
+            def __exit__(ctx, *params):
+                duration = utctime() - now
+                if duration > self._post_time:
+                    self._post_time = duration
+        return Ctx()
     def _get(self, tx):
         if tx is None or tx['id'] is None:
             return None
@@ -443,7 +475,7 @@ class DataResource:
             fields['depth'] = fields.get('depth',1) + 1
             for digest_name, digest_object in digests.items():
                 fields[digest_name] = digest_object.hexdigest()
-        self.lock.use()
+        self.lock.use(self._post_time)
         #post_fut.set_result([stream.read(), **tags_dict])
         #posted_condition.wait_for(lambda: self._post_queue[0] is posted_condition)
 
@@ -457,8 +489,9 @@ class DataResource:
 
         can_post_event.wait()
         #print('got can post event', can_post_event)
-        self.lock.use()
-        result = self.seq.post(stream.read(), **tags_dict)
+        with self._update_post_time():
+            self.lock.use(self._post_time)
+            result = self.seq.post(stream.read(), **tags_dict)
         #print('posted', can_post_event, result['id'])
         return result
 
@@ -478,6 +511,7 @@ if __name__ == '__main__':
         one = dr.store('Hello world-1', tagname='tagvalue')
         print(one.result())
         two = dr.store('Hello world-2', tagname='tagvalue')
+        dr.keepalive()
         three = dr.store('Hello world-3', tagname='tagvalue')
     latest = dr.latest()
     with latest['stream'] as stream:
