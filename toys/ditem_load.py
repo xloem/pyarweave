@@ -341,8 +341,7 @@ def main():
             nextstream.write('\n')
             ct += 1
         nextstream.flush()
-        stream = nextstream.buffer
-        oldstream = nextstream
+        stream = nextstream.detach()
         size = stream.tell()
         stream.seek(0)
         fields['depth'] = fields.get('depth',1) + 1

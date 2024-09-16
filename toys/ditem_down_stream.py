@@ -128,7 +128,7 @@ class DownStream(io.RawIOBase):
             data = self._cache.peek(idx)
             self._cache.unlock(idx, 1)
             if type(data) is not bytes:
-                if have_data:
+                if have_data and not data.done():
                     for idx in range(idx+1, idx1):
                         self._cache.unlock(idx, 1)
                     break
@@ -146,14 +146,20 @@ class DownStream(io.RawIOBase):
             b_offset += size
         for idx in range(idx1, prefetch_tail):
             self._cache.unlock(idx, 1)
+        if self.offset < self._pbar.n + self.size // 16:
+            # i guess ideally this might track coverage of the file :s
+            self._pbar.update(offset - self._pbar.n)
         self.offset = offset
         #print(self._cache.used, self._cache.capacity, len(self._cache.expiry))
         #print(idx0, idx1, '->', b_offset)
         return b_offset
     def __enter__(self):
         self._pump.__enter__()
+        self._pbar = tqdm.tqdm(desc='opening ' + self.name,total=self.size,unit='B',unit_scale=True,leave=False) 
+        self._pbar.__enter__()
         return self
     def __exit__(self, *params):
+        self._pbar.__exit__(*params)
         return self._pump.__exit__(*params)
 
     def _length(self, txid):

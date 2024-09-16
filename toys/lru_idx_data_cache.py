@@ -80,7 +80,7 @@ class Cache:
             return data[0]
     def access(self, idx, lock=False):
         '''Retrieve data at an index in the cache.'''
-        self.fsck()
+        #self.fsck()
         data = self.cache[idx]
         if data is not None:
             data_, size, expiry_idx, locked = data
@@ -92,7 +92,7 @@ class Cache:
             if lock:
                 self.lock(idx, lock)
             data = data_
-        self.fsck()
+        #self.fsck()
         return data
     def fsck(self):
         ct = 0

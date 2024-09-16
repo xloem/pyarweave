@@ -71,8 +71,8 @@ def iterate_graphql(peer, field:str, arguments:dict, queries:str, continuing_arg
 
 # sequential data
 class Sequence:
-    def __init__(self, peer, arguments, wallet = None, bundlr = None, prev_tagname = 'prev', clock_tagname = 'clock', **extra_tags):
-        self.peer = peer
+    def __init__(self, peers, arguments, wallet = None, bundlr = None, prev_tagname = 'prev', clock_tagname = 'clock', **extra_tags):
+        self.peers = peers
         #if type(arguments) is dict:
         #    arguments = ','.join(f'{key}:{val}' for key, val in arguments.items())
         self.arguments = arguments
@@ -101,7 +101,7 @@ class Sequence:
             block_entries = []
             last = None
             for idx, tx in enumerate(iterate_graphql(
-                self.peer, 'transactions',
+                self.peers[0], 'transactions',
                 {**self.arguments, **arguments},
                 'id owner{address}tags{name value}block{id height}bundledIn{id}',
                 poll_seconds = _poll_seconds,
@@ -171,7 +171,7 @@ class Sequence:
             tags = tags
         )
         self.latest = tx
-        print('sent', self.latest, result)
+        #print('sent', self.latest, result)
         #    # what about race conditions locking
         return tx
 
@@ -252,7 +252,7 @@ class Lock:
         })
 
         # here we have to wait for it to be our turn to lock it
-        with tqdm.tqdm(unit='s') as pbar:
+        with tqdm.tqdm(desc='lock',unit='s',leave=False) as pbar:
             while True:
                 holder = next(self.query_iterate(
                     now, # this is intended to always let our transaction through, via the timeout catch in the next condition below
@@ -336,9 +336,14 @@ class Lock:
         })
 
 class DataResource:
-    def __init__(self, wallet_or_address, peer = None, bundlrnode = None, poll_time = 0.2, expected_completion_time = 1, timeout = 60):
+    def __init__(self, wallet_or_address, peers = None, bundlrnode = None, poll_time = 0.2, expected_completion_time = 1, timeout = 60):
         bundlr = bundlrnode
-        peer = peer or ar.Peer()
+        if peers is None:
+            peers = 8
+        if type(peers) is int:
+            num_gws = peers
+            conns_per_gw = ar.Peer().max_outgoing_connections // num_gws
+            peers = [ar.Peer(url,outgoing_connections=conns_per_gw,requests_per_period=None) for url in ar.PUBLIC_GATEWAYS[:num_gws]]
         # is it a representation of a wallet?
         if type(wallet_or_address) is ar.Wallet:
             # yes it's a wallet
@@ -366,15 +371,14 @@ class DataResource:
                 import bundlr
                 bundlr = bundlr.Node()
             address = wallet.address
-        self.seq = Sequence(peer, dict(owners=[address],tags=dict(seq='data')), wallet, bundlr, seq='data')
+        self.seq = Sequence(peers, dict(owners=[address],tags=dict(seq='data')), wallet, bundlr, seq='data')
         self.seq_lock = threading.Lock()
-        self.lock = Lock(Sequence(peer, dict(owners=[address],tags=dict(seq='lock')), wallet, bundlr, seq='lock'))
+        self.lock = Lock(Sequence(peers, dict(owners=[address],tags=dict(seq='lock')), wallet, bundlr, seq='lock'))
         self.lock_params = dict(
             poll_time = poll_time,
             expected_completion_time = expected_completion_time,
             expiry_timeout_time = timeout
         )
-        self.pool = concurrent.futures.ThreadPoolExecutor()
         self._post_queue = collections.deque()
         self._post_time = 0
     def store(self, data, **tags):
@@ -396,6 +400,7 @@ class DataResource:
             with self.seq_lock:
                 assert self._post_queue[0] is can_post_event
                 assert self._post_queue.popleft() is can_post_event
+                fut.result() # raise exception if one happened
                 if len(self._post_queue):
                     self._post_queue[0].set()
         fut.add_done_callback(fut_done)
@@ -404,6 +409,7 @@ class DataResource:
         self.lock.lock(**self.lock_params)
         with self._update_post_time():
             self.seq.update_latest()
+        self.pool = concurrent.futures.ThreadPoolExecutor()
         self.pool.__enter__()
         return self
     def keepalive(self):
@@ -436,14 +442,13 @@ class DataResource:
         if tx is None or tx['id'] is None:
             return None
         try:
-            tx_stream = self.seq.peer.gateway_stream(tx['id']) # self.seq.peer.data
+            tx_stream = self.seq.peers[0].gateway_stream(tx['id']) # self.seq.peer.data
         except ar.ArweaveNetworkException as exc:
             if exc.args[1] == 404: # sent to private graphql endpoint but not processed yet
                 tx_stream = self.seq.bundlr.stream(tx['id'])
             else:
                 raise
-        gws = [self.seq.peer]
-        tx['stream'] = ditem_down_stream.DownStream(gws, tx_stream, cachesize=1024*1024*1024, bundlrs=[self.seq.bundlr]).expand()
+        tx['stream'] = ditem_down_stream.DownStream(self.seq.peers, tx_stream, cachesize=1024*1024*1024, bundlrs=[self.seq.bundlr]).expand()
         return tx
     def _store(self, can_post_event, stream, size, tags):
         tags_dict = tags
@@ -469,7 +474,7 @@ class DataResource:
                 nextstream.write('\n')
                 ct += 1
             nextstream.flush()
-            stream = nextstream.buffer
+            stream = nextstream.detach()
             size = stream.tell()
             stream.seek(0)
             fields['depth'] = fields.get('depth',1) + 1
