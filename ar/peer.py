@@ -9,7 +9,7 @@ import time
 
 import erlang
 import json
-import requests
+import requests, urllib3, socket
 
 def binary_to_term(b):
     # arweave.live seems to replace nonascii chars with this sequence :/
@@ -19,7 +19,7 @@ def binary_to_term(b):
     return erlang.binary_to_term(b)
 
 class HTTPClient:
-    def __init__(self, api_url, timeout = None, retries = 10, outgoing_connections = 256, requests_per_period = DEFAULT_REQUESTS_PER_MINUTE_LIMIT, period_sec = 60, extra_headers = {}, cert_fingerprint = None):
+    def __init__(self, api_url, timeout = None, retries = 10, outgoing_connections = 256, requests_per_period = DEFAULT_REQUESTS_PER_MINUTE_LIMIT, period_sec = 60, extra_headers = {}, cert_fingerprint = None, resolved_ips = None):
         self.api_url = api_url
         self.session = requests.Session()
         self.max_outgoing_connections = outgoing_connections
@@ -32,29 +32,59 @@ class HTTPClient:
         self.extra_headers = extra_headers
         self.req_history = []
         max_retries = requests.adapters.Retry(total=retries, backoff_factor=0.1, status_forcelist=[500,502,503,504]) # from so
-        adapter = self._FingerprintAdapter(
+        parsed_url = requests.compat.urlparse(self.api_url)
+        host = parsed_url.hostname
+        if resolved_ips is None:
+            # gateways use unique subdomains for txids to deter xss attacks,
+            # but this can cause a new nameserver lookup for every txid,
+            # and prevents the poolmanager from reusing the connections.
+            # so, the domain is looked up in advance manually.
+            port = parsed_url.port or urllib3.connection.port_by_scheme[parsed_url.scheme.lower()]
+            family = urllib3.util.connection.allowed_gai_family()
+            resolved_ips = [sa[0] for af, socktype, proto, canonname, sa in socket.getaddrinfo(host, port, family, socket.SOCK_STREAM)]
+        adapter = self._DomainAdapter(
+            hostname = host,
+            ips = resolved_ips,
             fingerprint = cert_fingerprint,
             pool_connections = outgoing_connections,
             pool_maxsize = outgoing_connections,
             max_retries = max_retries,
             pool_block = True,
         )
-        #self.session.mount('http://', adapter)
+        self.session.mount('http://', adapter)
         self.session.mount('https://', adapter)
         self.timeout = timeout
     def __del__(self):
         self.session.close()
-    class _FingerprintAdapter(requests.adapters.HTTPAdapter):
-        def __init__(self, fingerprint = None, **kwparams):
+    class _DomainAdapter(requests.adapters.HTTPAdapter):
+        def __init__(self, hostname, ips, fingerprint = None, **kwparams):
+            self.hostname = hostname
+            self.ips = ips
             self.fingerprint = fingerprint
+            self._round_robin_idx = 0
+            self._round_robin_lock = threading.Lock()
             super().__init__(**kwparams)
         def init_poolmanager(self, connections, maxsize, block=False):
+            # pass fingerprint and hostname to urllib3
             self.poolmanager = requests.packages.urllib3.poolmanager.PoolManager(
                 num_pools = connections,
                 maxsize = maxsize,
                 block = block,
                 assert_fingerprint = self.fingerprint,
+                assert_hostname = self.hostname,
+                server_hostname = self.hostname,
             )
+        def build_connection_pool_key_attributes(self, request, verify, cert=None):
+            # replace the host with a known ip to connect to for reuse and speed
+            host_params, pool_kwargs = super().build_connection_pool_key_attributes(request, verify, cert)
+            assert 'host' in host_params
+            with self._round_robin_lock:
+                host_params['host'] = self.ips[self._round_robin_idx]
+                self._round_robin_idx = (self._round_robin_idx + 1) % len(self.ips)
+            return [host_params, pool_kwargs]
+        def request_url(self, request, proxies):
+            # provide the whole url so the correct host header will be passed to the server
+            return requests.utils.urldefragauth(request.url)
 
     def ratelimited(self):
         if self.requests_per_period is None:
@@ -154,6 +184,9 @@ class HTTPClient:
                     self.outgoing_connection_semaphore.acquire()
                 try:
                     response = self.session.request(**{'url': url, 'timeout': self.timeout, **request_kwparams})
+                    if not request_kwparams.get('stream'):
+                        with response: # ensure data read and socket closed
+                            response.content
                 finally:
                     self.outgoing_connection_semaphore.release()
 
@@ -184,7 +217,7 @@ class HTTPClient:
             except requests.exceptions.RequestException as exc:
                 text = '' if response is None else response.text
                 status_code = 0 if response is None else response.status_code
-                if status_code == 429:
+                if status_code == 429 or status_code == 522: # 522 means server behind cloudfront timed out, these have resolved later
                     # too many requests
                     self._ratelimit_epilogue(False)
                     self.on_too_many_requests()
