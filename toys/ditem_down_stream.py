@@ -164,8 +164,11 @@ class DownStream(io.RawIOBase):
 
     def _length(self, txid):
         try:
-            with self.gws.use() as gw:
-                return int(gw._request(txid, method='HEAD').headers['Content-Length'])
+            with (
+                self.gws.use() as gw,
+                gw._request(txid, method='HEAD') as response
+            ):
+                return int(response.headers['Content-Length'])
         except ar.ArweaveNetworkException as exc:
             # this is in the graphql too i think
             if exc.args[1] == 404 and len(self._bundlrs):
@@ -178,8 +181,11 @@ class DownStream(io.RawIOBase):
     def _data(self, txid):
         # might be faster to push raw headers to raw sockets here or use libcurl
         try:
-            with self.gws.use() as gw:
-                return gw._request(txid, method='GET').content
+            with (
+                self.gws.use() as gw,
+                gw._request(txid, method='GET') as response
+            ):
+                return response.content
         except ar.ArweaveNetworkException as exc:
             if exc.args[1] == 404 and len(self._bundlrs):
                 for bundlr in self._bundlrs:
