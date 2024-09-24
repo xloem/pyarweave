@@ -1,4 +1,4 @@
-import base64, bisect, collections, datetime, hashlib, io, json, math, os, threading, time
+import base64, bisect, collections, datetime, hashlib, io, json, logging, math, os, threading, time
 import concurrent.futures
 
 import ar
@@ -9,6 +9,7 @@ import ditem_load, ditem_down_stream
 # general utils
 def utctime():
     return datetime.datetime.now(datetime.UTC).timestamp()
+logger = logging.getLogger(__name__)
 
 # graphql helper
 HEIGHT_DESC = 'HEIGHT_DESC'
@@ -52,6 +53,8 @@ def encode_graphql_arguments(obj,key=None,braces='()'):
 def iterate_graphql(peer, field:str, arguments:dict, queries:str, continuing_arguments:dict = None, poll_seconds = 1, poll_instances = 0):
     query = f'''query{{{field}{encode_graphql_arguments(arguments)}{{edges{{cursor node{{{queries}}}}}}}}}'''
     result = peer.graphql(query)['data'][field]['edges']
+    logger.debug('QUERY: ' + query)
+    logger.debug('RESULT: ' + repr(result))
     yield from [{'cursor':item['cursor'],**item['node']} for item in result]
     if continuing_arguments is not None:
         arguments = continuing_arguments
@@ -67,6 +70,9 @@ def iterate_graphql(peer, field:str, arguments:dict, queries:str, continuing_arg
                 poll_instances -= 1
         query = f'query{{{field}{encode_graphql_arguments(arguments)}{{edges{{cursor node{{{queries}}}}}}}}}'
         result = peer.graphql(query)['data'][field]['edges']
+        if result:
+            logger.debug('QUERY: ' + query)
+            logger.debug('RESULT: ' + repr(result))
         yield from [{'cursor':item['cursor'],**item['node']} for item in result]
 
 # sequential data
@@ -154,6 +160,7 @@ class Sequence:
             data = data.encode()
         tags = dict(self.extra_tags)
         tags.update(post_tags)
+        logger.debug('post ' + repr(tags))
         di = ar.DataItem(data = data)
         assert self.clock_tagname not in tags
         assert self.prev_tagname not in tags
@@ -336,7 +343,7 @@ class Lock:
         })
 
 class DataResource:
-    def __init__(self, wallet_or_address, peers = None, bundlrnode = None, poll_time = 0.2, expected_completion_time = 1, timeout = 60):
+    def __init__(self, wallet_or_address, seqs = ['data'], peers = None, bundlrnode = None, poll_time = 0.2, expected_completion_time = 1, timeout = 60, large_data = True, tags = {}):
         bundlr = bundlrnode
         if peers is None:
             peers = 8
@@ -371,17 +378,29 @@ class DataResource:
                 import bundlr
                 bundlr = bundlr.Node()
             address = wallet.address
-        self.seq = Sequence(peers, dict(owners=[address],tags=dict(seq='data')), wallet, bundlr, seq='data')
+        self.wallet = wallet
+        self.address = address
+        self.default_seq = seqs[0]
+        assert '__lock' not in seqs
+        assert '__seq' not in tags
+        self.tags = tags
+        self.seqs = {
+            seq: Sequence(peers, dict(owners=[address],tags=dict(__seq=seq,**self.tags)), wallet, bundlr, __seq=seq, **self.tags)
+            for seq in seqs
+        }
         self.seq_lock = threading.Lock()
-        self.lock = Lock(Sequence(peers, dict(owners=[address],tags=dict(seq='lock')), wallet, bundlr, seq='lock'))
+        self.lock = Lock(Sequence(peers, dict(owners=[address],tags=dict(__seq='__lock',**self.tags)), wallet, bundlr, __seq='__lock', **self.tags))
         self.lock_params = dict(
             poll_time = poll_time,
             expected_completion_time = expected_completion_time,
             expiry_timeout_time = timeout
         )
+        self.large_data = large_data
         self._post_queue = collections.deque()
         self._post_time = 0
-    def store(self, data, **tags):
+    def store(self, data, seq=None, **tags):
+        if seq is None:
+            seq = self.default_seq
         if type(data) is str:
             data = data.encode()
         if type(data) is bytes:
@@ -390,25 +409,30 @@ class DataResource:
         else:
             size = os.stat(data.name).st_size
         self.lock.use(self._post_time)
-        can_post_event = threading.Event()
-        with self.seq_lock:
-            if len(self._post_queue) == 0:
-                can_post_event.set()
-            self._post_queue.append(can_post_event)
-        fut = self.pool.submit(self._store, can_post_event, data, size, tags)
-        def fut_done(fut):
+        if self.large_data:
+            can_post_event = threading.Event()
             with self.seq_lock:
-                assert self._post_queue[0] is can_post_event
-                assert self._post_queue.popleft() is can_post_event
-                fut.result() # raise exception if one happened
-                if len(self._post_queue):
-                    self._post_queue[0].set()
-        fut.add_done_callback(fut_done)
-        return fut
+                if len(self._post_queue) == 0:
+                    can_post_event.set()
+                self._post_queue.append(can_post_event)
+            fut = self.pool.submit(self._store, can_post_event, self.seqs[seq], seq, data, size, tags)
+            def fut_done(fut):
+                with self.seq_lock:
+                    assert self._post_queue[0] is can_post_event
+                    assert self._post_queue.popleft() is can_post_event
+                    fut.result() # raise exception if one happened
+                    if len(self._post_queue):
+                        self._post_queue[0].set()
+            fut.add_done_callback(fut_done)
+            return fut
+        else:
+            with self._update_post_time():
+                return self.seq.post(data, **tags)
     def __enter__(self):
         self.lock.lock(**self.lock_params)
         with self._update_post_time():
-            self.seq.update_latest()
+            for seq in self.seqs.values():
+                seq.update_latest()
         self.pool = concurrent.futures.ThreadPoolExecutor()
         self.pool.__enter__()
         return self
@@ -422,11 +446,23 @@ class DataResource:
         self.pool.__exit__(*params)
         self.lock.unlock(post_seconds=self._post_time)
     def __getitem__(self, clock):
-        return self._get(self.seq[clock])
+        return self.get(None, clock)
     def __len__(self):
-        return len(self.seq)
-    def latest(self, **tags):
-        return self._get(self.seq.latest)
+        return self.len()
+    def get(self, seq=None, clock=None, **tags):
+        seq = self.seqs[seq or self.default_seq]
+        if clock is not None:
+            tx = seq[clock]
+        elif tags:
+            tx = seq.get(tags=tags)
+        else:
+            tx = seq.latest
+        return self._get(seq, tx)
+    def len(self, seq=None):
+        seq = self.seqs[seq or self.default_seq]
+        return len(seq)
+    def latest(self, seq=None, **tags):
+        return self.get(seq, None, **tags)
 
     def _update_post_time(self):
         now = utctime()
@@ -438,25 +474,29 @@ class DataResource:
                 if duration > self._post_time:
                     self._post_time = duration
         return Ctx()
-    def _get(self, tx):
+    def _get(self, seq, tx):
         if tx is None or tx['id'] is None:
             return None
         try:
-            tx_stream = self.seq.peers[0].gateway_stream(tx['id']) # self.seq.peer.data
+            tx_stream = seq.peers[0].gateway_stream(tx['id']) # self.seq.peer.data
         except ar.ArweaveNetworkException as exc:
             if exc.args[1] == 404: # sent to private graphql endpoint but not processed yet
-                tx_stream = self.seq.bundlr.stream(tx['id'])
+                tx_stream = seq.bundlr.stream(tx['id'])
             else:
                 raise
-        tx['stream'] = ditem_down_stream.DownStream(self.seq.peers, tx_stream, cachesize=1024*1024*1024, bundlrs=[self.seq.bundlr]).expand()
+        if self.large_data:
+            tx['stream'] = ditem_down_stream.DownStream(seq.peers, tx_stream, cachesize=1024*1024*1024, bundlrs=[seq.bundlr]).expand()
+        else:
+            tx['stream'] = tx_stream
         return tx
-    def _store(self, can_post_event, stream, size, tags):
+    def _store(self, can_post_event, seq, name, stream, size, tags):
         tags_dict = tags
-        tags = [dict(name='seq',value='ditem')] + [dict(name=name,value=value) for name, value in tags.items()]
-        sender = ditem_load.Sender(self.seq.wallet.rsa, tags=tags)
+        full_tags = {**self.tags,**tags}
+        tags = [dict(name='__seq',value='ditem')] + [dict(name=name,value=value) for name, value in full_tags.items()]
+        sender = ditem_load.Sender(seq.wallet.rsa, tags=tags)
         fields = dict(
             size = size,
-            name = self.seq.wallet.address + ':' + self.seq.latest['tags']['clock']
+            name = seq.wallet.address + ':' + name + ':' + seq.latest['tags']['clock'],
         )
         ct = 2
         while ct > 1:
@@ -496,7 +536,7 @@ class DataResource:
         #print('got can post event', can_post_event)
         with self._update_post_time():
             self.lock.use(self._post_time)
-            result = self.seq.post(stream.read(), **tags_dict)
+            result = seq.post(stream.read(), **tags_dict)
         #print('posted', can_post_event, result['id'])
         return result
 
