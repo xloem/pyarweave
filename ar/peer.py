@@ -203,9 +203,10 @@ class HTTPClient:
                     except:
                         pass
                     else:
-                        msg = msg.get('error',msg.get('errors'))
-                        if msg is not None:
-                            raise ArweaveException(msg)
+                        if type(msg) is dict:
+                            msg = msg.get('error',msg.get('errors'))
+                            if msg is not None:
+                                raise ArweaveException(msg)
                 if response.status_code == 400:
                     raise ArweaveException(response.text)
 
