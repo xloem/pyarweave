@@ -2,6 +2,7 @@ import io
 
 from .utils import arbinenc, arbindec, b64enc, b64dec
 from .utils.merkle import Node as MerkleNode
+from . import utils
 
 class Chunk:
     def __init__(self, data = None, data_path = None, tx_path = None, packing = 'unpacked'):
@@ -28,11 +29,46 @@ class Chunk:
 
     @property
     def data_hash_raw(self):
+        '''sha256 of the chunk'''
         return self.data_path[-1].data_hash
+
+    @property
+    def data_hash(self):
+        return b64enc(self.data_path[-1].data_hash)
+
+    @property
+    def data_root_raw(self):
+        return self.data_path[0].id_raw
+
+    @property
+    def data_root(self):
+        return b64enc(self.data_path[0].id_raw)
+
+    @property
+    def tx_root_raw(self):
+        return self.tx_path[0].id_raw
+
+    @property
+    def tx_root(self):
+        return b64enc(self.tx_path[0].id_raw)
 
     def __len__(self):
         tail = self.data_path[-1]
         return tail.max_byte_range - tail.min_byte_range
+
+    def validate(self, data_root, tx_root):
+        assert utils.merkle.validate_path(self.data_path[0].id_raw, self.start_offset, self.start_offset, self.end_offset, self.data_path[0].tobytes())
+        if self.end_offset > self.start_offset:
+            assert utils.merkle.validate_path(self.data_path[0].id_raw, self.end_offset-1, self.start_offset, self.end_offset, self.data_path[0].tobytes())
+        assert utils.merkle.validate_path(self.tx_path[0].id_raw, self.tx_start_offset, self.tx_start_offset, self.tx_end_offset, self.tx_path[0].tobytes())
+        if self.tx_end_offset > self.tx_start_offset:
+            assert utils.merkle.validate_path(self.tx_path[0].id_raw, self.tx_end_offset-1, self.tx_start_offset, self.tx_end_offset, self.tx_path[0].tobytes())
+        assert self.data_path[0].id_raw == self.tx_path[-1].data_hash
+        if data_root is not None:
+            assert data_root == self.data_root
+        if tx_root is not None:
+            assert tx_root == self.tx_root
+        assert utils.merkle.hash_raw(self.data) == self.data_hash_raw
 
     def tojson(self):
         return {
@@ -81,7 +117,21 @@ class Chunk:
 
 if __name__ == '__main__':
     import ar
-    peer = ar.Peer(ar.Peer().health()['origins'][-1]['endpoint'])
+    for gw_url in ar.PUBLIC_GATEWAYS:
+        gw = ar.Peer(gw_url)
+        for peer_url in [*[origin['endpoint'] for origin in gw.health()['origins']], *gw.peers()]:
+            try:
+                peer = ar.Peer(peer_url)
+                peer.info()
+                break
+            except:
+                peer = None
+                print('failed to connect to', peer_url)
+        if peer:
+            break
+    else:
+        raise RuntimeError('no peer')
+    print('connected to', peer.api_url)
     chunk_bounds = peer.data_sync_record()[-1]
     chunkjson = peer.chunk(chunk_bounds[0])
     chunkbytes = peer.chunk2(chunk_bounds[0])
@@ -89,4 +139,6 @@ if __name__ == '__main__':
     chunkfrombytes = Chunk.frombytes(chunkbytes)
     assert chunkfromjson.tobytes() == chunkbytes
     assert chunkfrombytes.tojson() == chunkjson
-    print('chunk range:', chunkfrombytes.first_offset, chunkfrombytes.last_offset)
+    chunkfromjson.validate(None,None)
+    chunkfrombytes.validate(None,None)
+    print('chunk range:', chunkfrombytes.start_offset, chunkfrombytes.end_offset)
