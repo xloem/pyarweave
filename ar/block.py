@@ -245,6 +245,7 @@ class Block:
 
     # ar_node_utils.erlt / validate_block
 
+    # NOTE: the pip randomx module uses a backend funded by arweave.
     #  POW = ar_randomx_state:hash(Height, << Nonce/binary, BDS/binary >>),
                 # uses randomx_state_by_height
                         # which calls get_state_by_height, swap_height, randomx_key
