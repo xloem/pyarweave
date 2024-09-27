@@ -70,7 +70,6 @@ class HTTPClient:
             self._round_robin_lock = threading.Lock()
             super().__init__(**kwparams)
         def init_poolmanager(self, connections, maxsize, block=False):
-            # pass fingerprint and hostname to urllib3
             if self.scheme == 'http':
                 self.poolmanager = requests.packages.urllib3.poolmanager.PoolManager(
                     num_pools = connections,
@@ -79,6 +78,7 @@ class HTTPClient:
                     server_hostname = self.hostname,
                 )
             else:
+                # pass fingerprint and hostname to urllib3
                 self.poolmanager = requests.packages.urllib3.poolmanager.PoolManager(
                     num_pools = connections,
                     maxsize = maxsize,
@@ -460,7 +460,7 @@ class Peer(HTTPClient):
             "number_of_confirmations": "<NumberOfConfirmations>",
         }
         '''
-        response = self._get_json('tx', txid, 'status')
+        response = self._get_json('tx', hash, 'status')
         return response
 
     def tx(self, txid):
@@ -1033,6 +1033,9 @@ class Peer(HTTPClient):
         if field == 'data':
             response = self._get('tx', hash, 'data.')
             return response.content
+        elif field == 'data_root':
+            response = self._get('tx', hash, 'data_root')
+            return response.text
         else:
             response = self._get_json('tx', hash, field)
             for tag in response:
