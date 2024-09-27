@@ -69,8 +69,15 @@ class Wallet(object):
 
     def verify(self, message, signed_data):
         h = SHA256.new(message)
-        status = PKCS1_PSS.new(self.rsa).verify(h, signed_data)
-        return status
+        for salt_length in [
+            self.rsa.size_in_bytes() - h.digest_size - 2,
+            32,
+            0,
+        ]:
+            if PKCS1_PSS.new(self.rsa, saltLen=salt_length).verify(h, signed_data):
+                return True
+        else:
+            return False
 
     def get_last_transaction_id(self):
         self.last_tx = self.peer.tx_anchor()

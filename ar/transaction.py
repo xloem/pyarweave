@@ -109,14 +109,14 @@ class Transaction(object):
 
         tags_count = int.from_bytes(stream.read(2), 'big')
 
-        tags = []
+        tags = [None]*tags_count
         for tag_idx in range(tags_count):
             name_size = int.from_bytes(stream.read(2), 'big')
             value_size = int.from_bytes(stream.read(2), 'big')
             name = stream.read(name_size)
             value = stream.read(value_size)
             tag = create_tag(name, value, format == 2)
-            tags.append(tag)
+            tags[tags_count - 1 - tag_idx] = tag
 
         assert stream.tell() == len(bintx)
 
@@ -210,6 +210,11 @@ class Transaction(object):
 
         if type(self.id) == bytes:
             self.id = self.id.decode()
+
+    def verify(self):
+        assert self.wallet.verify(self.get_signature_data(), b64dec(self.signature))
+        assert b64dec(self.id) == hashlib.sha256(b64dec(self.signature)).digest()
+        return True
 
     def get_signature_data(self):
         self.reward = self.get_reward(self.data_size, target_address=self.target if len(self.target) > 0 else None)
