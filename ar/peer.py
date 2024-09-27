@@ -20,6 +20,8 @@ def binary_to_term(b):
 
 class HTTPClient:
     def __init__(self, api_url, timeout = None, retries = 10, outgoing_connections = 256, requests_per_period = DEFAULT_REQUESTS_PER_MINUTE_LIMIT, period_sec = 60, extra_headers = {}, cert_fingerprint = None, resolved_ips = None):
+        if '://' not in api_url:
+            api_url = 'http://' + api_url
         self.api_url = api_url
         self.session = requests.Session()
         self.max_outgoing_connections = outgoing_connections
@@ -42,7 +44,9 @@ class HTTPClient:
             port = parsed_url.port or urllib3.connection.port_by_scheme[parsed_url.scheme.lower()]
             family = urllib3.util.connection.allowed_gai_family()
             resolved_ips = [sa[0] for af, socktype, proto, canonname, sa in socket.getaddrinfo(host, port, family, socket.SOCK_STREAM)]
+        assert cert_fingerprint is None or parsed_url.scheme != 'http'
         adapter = self._DomainAdapter(
+            scheme = parsed_url.scheme,
             hostname = host,
             ips = resolved_ips,
             fingerprint = cert_fingerprint,
@@ -57,7 +61,8 @@ class HTTPClient:
     def __del__(self):
         self.session.close()
     class _DomainAdapter(requests.adapters.HTTPAdapter):
-        def __init__(self, hostname, ips, fingerprint = None, **kwparams):
+        def __init__(self, scheme, hostname, ips, fingerprint = None, **kwparams):
+            self.scheme = scheme
             self.hostname = hostname
             self.ips = ips
             self.fingerprint = fingerprint
@@ -66,14 +71,22 @@ class HTTPClient:
             super().__init__(**kwparams)
         def init_poolmanager(self, connections, maxsize, block=False):
             # pass fingerprint and hostname to urllib3
-            self.poolmanager = requests.packages.urllib3.poolmanager.PoolManager(
-                num_pools = connections,
-                maxsize = maxsize,
-                block = block,
-                assert_fingerprint = self.fingerprint,
-                assert_hostname = self.hostname,
-                server_hostname = self.hostname,
-            )
+            if self.scheme == 'http':
+                self.poolmanager = requests.packages.urllib3.poolmanager.PoolManager(
+                    num_pools = connections,
+                    maxsize = maxsize,
+                    block = block,
+                    server_hostname = self.hostname,
+                )
+            else:
+                self.poolmanager = requests.packages.urllib3.poolmanager.PoolManager(
+                    num_pools = connections,
+                    maxsize = maxsize,
+                    block = block,
+                    assert_fingerprint = self.fingerprint,
+                    assert_hostname = self.hostname,
+                    server_hostname = self.hostname,
+                )
         def build_connection_pool_key_attributes(self, request, verify, cert=None):
             # replace the host with a known ip to connect to for reuse and speed
             host_params, pool_kwargs = super().build_connection_pool_key_attributes(request, verify, cert)
@@ -230,9 +243,9 @@ class HTTPClient:
                 if type(exc) is requests.ReadTimeout or status_code == 404:
                     if status_code == 0:
                         status_code = 598
-                    logger.info('{}\n{}\n\n{}'.format(type(exc), exc, text, request_kwparams))
+                    logger.info('{}\n{}'.format(text, request_kwparams), exc_info=True)
                 else:
-                    logger.error('{}\n{}\n\n{}'.format(type(exc), exc, text, request_kwparams))
+                    logger.error('{}\n{}'.format(text, request_kwparams), exc_info=True)
                 if status_code == 520:
                     # cloudfront broke
                     self._ratelimit_epilogue(True)
@@ -349,7 +362,7 @@ class Peer(HTTPClient):
                             continue
                     break
                 except ArweaveException as exc:
-                    print(tx, exc)
+                    logging.warning('tx', exc_info=True)
                     continue
             if not partial_data:
                 raise ArweaveNetworkException()
@@ -1207,12 +1220,12 @@ from ar.utils.merkle import compute_root_hash, generate_transaction_chunks
 from ar.utils import b64enc
 import tempfile, shutil
 def reupload_tx(peer, tx, range=None):
-    stream = tempfile.SpooledTemporaryFile()
+    full_stream = tempfile.SpooledTemporaryFile()
     with peer.gateway_stream(tx) as network_data:
-        shutil.copyfileobj(network_data, stream)
+        shutil.copyfileobj(network_data, full_stream)
 
-    stream.seek(0)
-    chunks = generate_transaction_chunks(stream)
+    full_stream.seek(0)
+    chunks = generate_transaction_chunks(full_stream)
     try:
         tx_data_root = peer.tx_data_root(tx)
         logger.warning(f'uhh trying to reupload {tx}')
@@ -1224,7 +1237,7 @@ def reupload_tx(peer, tx, range=None):
         logger.error(f'{peer.api_url}: Data for {tx} mismatches generated root.')
         return False
     offset = 0
-    stream.seek(0)
+    full_stream.seek(0)
     for proof, chunk in zip(chunks['proofs'], chunks['chunks']):
         chunk_size = chunk.data_size
         chunk = {
@@ -1236,11 +1249,11 @@ def reupload_tx(peer, tx, range=None):
         }
         peer.send_chunk(chunk)
         offset+=chunk_size
-    stream.seek(0)
+    full_stream.seek(0)
     if range is not None:
         ranged_stream = tempfile.SpooledTemporaryFile()
         stream.seek(range[0])
         ranged_stream.write(stream.read(range[1]-range[0]))
         return ranged_stream
     else:
-        return stream
+        return full_stream
