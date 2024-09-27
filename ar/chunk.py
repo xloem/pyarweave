@@ -1,4 +1,4 @@
-import io
+import hashlib, io
 
 from .utils import arbinenc, arbindec, b64enc, b64dec
 from .utils.merkle import Node as MerkleNode
@@ -43,6 +43,14 @@ class Chunk:
     @property
     def data_root(self):
         return b64enc(self.data_path[0].id_raw)
+
+    @property
+    def tx_hash_raw(self):
+        return self.tx_path[-1].data_hash
+
+    @property
+    def tx_hash(self):
+        return b64enc(self.tx_path[-1].data_hash)
 
     @property
     def tx_root_raw(self):
@@ -97,20 +105,28 @@ class Chunk:
         )
 
     @classmethod
-    def frombytes(cls, bytes):
-        return cls.fromstream(io.BytesIO(bytes))
+    def frombytes(cls, bytes, tx_root_raw=None, data_root_raw=None):
+        return cls.fromstream(io.BytesIO(bytes), tx_root_raw, data_root_raw)
 
     @classmethod
-    def fromstream(cls, stream):
+    def fromstream(cls, stream, tx_root_raw=None, data_root_raw=None):
         data = arbindec(stream, 24)
         tx_path_bin = arbindec(stream, 24)
         data_path_bin = arbindec(stream, 24)
         packing_bin = arbindec(stream, 8)
         assert len(tx_path_bin) # have not diagnosed why this raises sometimes
+        tx_path = MerkleNode.frombytes(tx_path_bin)
+        data_path = MerkleNode.frombytes(data_path_bin, max_byte_range=len(data))
+        if tx_root_raw is not None:
+            assert tx_path[0].id_raw == tx_root_raw
+        assert tx_path[-1].data_hash == data_path[0].id_raw
+        if data_root_raw is not None:
+            assert data_path[0].id_raw == data_root_raw
+        assert data_path[-1].data_hash == hashlib.sha256(data).digest()
         return cls(
             data = data,
-            tx_path = MerkleNode.frombytes(tx_path_bin),
-            data_path = MerkleNode.frombytes(data_path_bin, max_byte_range=len(data)),
+            tx_path = tx_path,
+            data_path = data_path,
             packing = packing_bin.decode()
         )
 
