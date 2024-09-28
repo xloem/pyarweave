@@ -66,15 +66,17 @@ def arbindec(stream, bits):
     return data
 
 def arintenc(integer, bits):
-    if integer < 256:
-        if integer == 0:
-            return bytes([0])
-        else:
-            return bytes([1,integer])
+    if integer is None:
+        return bytes(bits // 8)
+    elif integer < 256 and bits == 8:
+        return bytes([1,integer])
     else:
         integer = int(integer)
         size_bits = integer.bit_length()
-        size_bits -= size_bits % -8 # round up to 8 bits
+        if size_bits == 0:
+            size_bits = 8
+        else:
+            size_bits -= size_bits % -8 # round up to 8 bits
         int_raw = integer.to_bytes(size_bits // 8, 'big')
         size_raw = len(int_raw).to_bytes(bits // 8, 'big')
         return size_raw + int_raw
@@ -85,6 +87,8 @@ def arintdec(stream, bits):
     if len(size_raw) != size_size:
         raise ArweaveException('stream terminated early')
     size = int.from_bytes(size_raw, 'big')
+    if size == 0:
+        return None
     int_raw = stream.read(size)
     if len(int_raw) != size:
         raise ArweaveException('stream terminated early')

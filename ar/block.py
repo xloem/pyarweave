@@ -9,15 +9,15 @@ from ar.utils import (
 from ar.utils.deep_hash import deep_hash
 from .chunk import Chunk
 from .transaction import Transaction
-from . import FORK_1_8, FORK_2_0, FORK_2_4, FORK_2_5, FORK_2_6, FORK_2_6_8, FORK_2_7, FORK_2_7_1, FORK_2_8
+from . import FORK_1_8, FORK_1_9, FORK_2_0, FORK_2_2, FORK_2_3, FORK_2_4, FORK_2_5, FORK_2_6, FORK_2_6_8, FORK_2_7, FORK_2_7_1, FORK_2_8
 from . import INITIAL_VDF_DIFFICULTY
 
 # STATUS
 # MINING IS NOT PLANNED AT THIS TIME
 # FORK      FROMBYTES   TOBYTES     FROMJSON    TOJSON      VALIDATION  MINING
 # gen       started     [ ]         [ ]         [ ]         unstarted   unstarted
-# 1.8       started     [ ]         [ ]         [ ]         unstarted   unstarted
-# 2.0       started     [ ]         [ ]         [ ]         unstarted   unstarted
+# 1.8       [X]         [X]         [X]         [X]         unstarted   unstarted
+# 2.0       [X]         [X]         [X]         [X]         unstarted   unstarted
 # 2.4       [X]         [X]         [X]         [X]         unstarted   unstarted
 # 2.5       [X]         [X]         [X]         [X]         notes       unstarted
 # 2.6       drafted     [ ]         [ ]         [ ]         unstarted   unstarted
@@ -309,9 +309,9 @@ class Block(AutoRaw):
         # size_tagged_txs,
         poa,
         # 2.5
-        usd_to_ar_rate = [0,0], scheduled_usd_to_ar_rate = [0,0],
-        packing_2_5_threshold = 0,
-        strict_data_split_threshold = 0, # account_tree,
+        usd_to_ar_rate = [None,None], scheduled_usd_to_ar_rate = [None,None],
+        packing_2_5_threshold = None,
+        strict_data_split_threshold = None, # account_tree,
         # 2.6
         hash_preimage = '', recall_byte = None, reward = 0,
         previous_solution_hash = '', partition_number = None,
@@ -500,8 +500,11 @@ class Block(AutoRaw):
             if str is not None:
                 kwparams[param] = int(str)
 
-        # rename
+        # rename fields
         # no renames known needed at this time
+
+        # remove internal fields
+        kwparams.pop('tx_tree', None)
 
         return cls(**kwparams)
 
@@ -653,12 +656,27 @@ class Block(AutoRaw):
             'indep_hash': self.indep_hash,
             'txs': [tx.id if type(tx) is Transaction else tx for tx in self.txs],
             'tx_root': self.tx_root,
-            'wallet_list': self.wallet_list,
-            'reward_addr': self.reward_addr,
-            'tags': self.tags,
-            'reward_pool': str(self.reward_pool),
-            'weave_size': str(self.weave_size),
-            'block_size': str(self.block_size),
+        })
+        if self.height >= FORK_2_4:
+            json.update({
+                'wallet_list': self.wallet_list,
+                'reward_addr': self.reward_addr,
+                'tags': self.tags,
+                'reward_pool': str(self.reward_pool),
+                'weave_size': str(self.weave_size),
+                'block_size': str(self.block_size),
+            })
+        else:
+            json.update({
+                'tx_tree': [],
+                'wallet_list': self.wallet_list,
+                'reward_addr': self.reward_addr,
+                'tags': self.tags,
+                'reward_pool': self.reward_pool,
+                'weave_size': self.weave_size,
+                'block_size': self.block_size,
+            })
+        json.update({
             'cumulative_diff': str(self.cumulative_diff),
             'hash_list_merkle': self.hash_list_merkle,
             'poa': {
@@ -801,6 +819,14 @@ if __name__ == '__main__':
             BLOCK_GEN_json  = peer.block_height (0),
             BLOCK_1_8_bytes = peer.block2_height(FORK_1_8),
             BLOCK_1_8_json  = peer.block_height (FORK_1_8),
+            BLOCK_1_9_bytes = peer.block2_height(FORK_1_9),
+            BLOCK_1_9_json  = peer.block_height (FORK_1_9),
+            BLOCK_2_0_bytes = peer.block2_height(FORK_2_0),
+            BLOCK_2_0_json  = peer.block_height (FORK_2_0),
+            BLOCK_2_2_bytes = peer.block2_height(FORK_2_2),
+            BLOCK_2_2_json  = peer.block_height (FORK_2_2),
+            BLOCK_2_3_bytes = peer.block2_height(FORK_2_3),
+            BLOCK_2_3_json  = peer.block_height (FORK_2_3),
             BLOCK_2_4_bytes = peer.block2_height(FORK_2_4),
             BLOCK_2_4_json  = peer.block_height (FORK_2_4),
             BLOCK_2_5_bytes = peer.block2_height(FORK_2_5),
@@ -822,13 +848,15 @@ if __name__ == '__main__':
 
     def dict_cmp(a,b,ctx=''):
         if a != b:
-            for k, v in a.items():
-                if v != b[k]:
+            for k in set([*a.keys(),*b.keys()]):
+                v1 = a.get(k,'MISSING')
+                v2 = b.get(k,'MISSING')
+                if v1 != v2:
                     subctx = ctx+f'["{k}"]'
-                    if type(v) is dict:
-                        return dict_cmp(v, b[k], ctx=subctx)
+                    if type(v1) is dict and type(v2) is dict:
+                        return dict_cmp(v1, v2, ctx=subctx)
                     else:
-                        print(subctx, repr(v), '!=', repr(b[k]))
+                        print(subctx, repr(v1), '!=', repr(v2))
             return False
         else:
             return True
@@ -846,7 +874,17 @@ if __name__ == '__main__':
                     return False
         else:
             return True
+    assert dict_cmp(Block.frombytes(BLOCK_1_8_bytes).tojson(), BLOCK_1_8_json)
+    assert bin_cmp(Block.fromjson(  BLOCK_1_8_json).tobytes(), BLOCK_1_8_bytes)
+    assert dict_cmp(Block.frombytes(BLOCK_1_9_bytes).tojson(), BLOCK_1_9_json)
+    assert bin_cmp(Block.fromjson(  BLOCK_1_9_json).tobytes(), BLOCK_1_9_bytes)
+    assert dict_cmp(Block.frombytes(BLOCK_2_0_bytes).tojson(), BLOCK_2_0_json)
+    assert bin_cmp(Block.fromjson(  BLOCK_2_0_json).tobytes(), BLOCK_2_0_bytes)
+    assert dict_cmp(Block.frombytes(BLOCK_2_2_bytes).tojson(), BLOCK_2_2_json)
+    assert bin_cmp(Block.fromjson(  BLOCK_2_2_json).tobytes(), BLOCK_2_2_bytes)
+    assert dict_cmp(Block.frombytes(BLOCK_2_3_bytes).tojson(), BLOCK_2_3_json)
+    assert bin_cmp(Block.fromjson(  BLOCK_2_3_json).tobytes(), BLOCK_2_3_bytes)
     assert dict_cmp(Block.frombytes(BLOCK_2_4_bytes).tojson(), BLOCK_2_4_json)
-    assert bin_cmp(Block.fromjson(BLOCK_2_4_json).tobytes(), BLOCK_2_4_bytes)
+    assert bin_cmp(Block.fromjson(  BLOCK_2_4_json).tobytes(), BLOCK_2_4_bytes)
     assert dict_cmp(Block.frombytes(BLOCK_2_5_bytes).tojson(), BLOCK_2_5_json)
-    assert bin_cmp(Block.fromjson(BLOCK_2_5_json).tobytes(), BLOCK_2_5_bytes)
+    assert bin_cmp(Block.fromjson(  BLOCK_2_5_json).tobytes(), BLOCK_2_5_bytes)
