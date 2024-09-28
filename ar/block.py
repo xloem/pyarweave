@@ -18,7 +18,7 @@ from . import INITIAL_VDF_DIFFICULTY
 # STATUS
 # MINING IS NOT PLANNED AT THIS TIME
 # FORK      FROMBYTES   TOBYTES     FROMJSON    TOJSON      VALIDATION  MINING
-# gen       started     [ ]         [ ]         [ ]         unstarted   unstarted
+# gen       [X]         [X]         [X]         [X]         unstarted   unstarted
 # 1.8       [X]         [X]         [X]         [X]         unstarted   unstarted
 # 2.0       [X]         [X]         [X]         [X]         unstarted   unstarted
 # 2.4       [X]         [X]         [X]         [X]         unstarted   unstarted
@@ -306,11 +306,12 @@ class Block(AutoRaw):
         nonce, previous_block, timestamp,
         last_retarget, diff, height, hash,
         indep_hash, txs, tx_root, # tx_tree, hash_list,
-        hash_list_merkle,
-        wallet_list, reward_addr, tags, reward_pool,
-        weave_size, block_size, cumulative_diff,
+        hash_list_merkle = b'',
+        wallet_list = None, reward_addr = 'unclaimed',
+        tags = [], reward_pool = None,
+        weave_size = None, block_size = None, cumulative_diff = 0,
         # size_tagged_txs,
-        poa,
+        poa = None,
         # 2.5
         usd_to_ar_rate = [None,None], scheduled_usd_to_ar_rate = [None,None],
         packing_2_5_threshold = None,
@@ -345,14 +346,17 @@ class Block(AutoRaw):
         self.height = height
         self.hash = b64enc_if_not_str(hash)
         self.indep_hash = b64enc_if_not_str(indep_hash)
-        if len(txs) and isinstance(txs[0], (bytes, bytearray)):
-            self.txs = [b64enc_if_not_str(tx) for tx in txs[::-1]]
+        if len(txs) and not isinstance(txs[0],Transaction):
+            self.txs = [b64enc_if_not_str(tx) for tx in txs]
         else:
             self.txs = txs
         self.tx_root = b64enc_if_not_str(tx_root)
         self.hash_list_merkle = b64enc_if_not_str(hash_list_merkle)
         self.wallet_list = b64enc_if_not_str(wallet_list)
-        self.reward_addr = b64enc_if_not_str(reward_addr or 'unclaimed')
+        if reward_addr == 'unclaimed':
+            self.reward_addr_raw = b''
+        else:
+            self.reward_addr_raw = b64dec_if_not_bytes(reward_addr)
         self.tags = tags
         self.reward_pool = reward_pool
         self.weave_size = weave_size
@@ -464,6 +468,13 @@ class Block(AutoRaw):
                 self.previous_cumulative_diff2, self.preimage2,
             ])
 
+    @property
+    def reward_addr(self):
+        if self.reward_addr_raw:
+            return b64enc(self.reward_addr_raw)
+        else:
+            return 'unclaimed'
+
     @classmethod
     def fromjson(cls, data):
         kwparams = {**data}
@@ -508,11 +519,6 @@ class Block(AutoRaw):
 
         # remove internal fields
         kwparams.pop('tx_tree', None)
-
-        # add default fields, considering moving these to class constructor
-        # where the other default fields are
-        kwparams.setdefault('hash_list_merkle', b'')
-        kwparams.setdefault('cumulative_diff', 0)
 
         return cls(**kwparams)
 
@@ -929,6 +935,11 @@ if __name__ == '__main__':
                     subctx = ctx+f'["{k}"]'
                     if type(v1) is dict and type(v2) is dict:
                         return dict_cmp(v1, v2, ctx=subctx)
+                    elif type(v1) is list and type(v2) is list:
+                        dict_cmp(len(v1), len(v2), ctx=subctx)
+                        for idx in range(min(len(v1),len(v2))):
+                            if v1[idx] != v2[idx]:
+                                print(f'{subctx}[{idx}]', repr(v1[idx]), '!=', repr(v2[idx]))
                     else:
                         print(subctx, repr(v1), '!=', repr(v2))
             return False
@@ -948,8 +959,8 @@ if __name__ == '__main__':
                     return False
         else:
             return True
-    #assert dict_cmp(Block.frombytes(BLOCK_GEN_bytes).tojson(), BLOCK_GEN_json)
-    #assert bin_cmp(Block.fromjson(  BLOCK_GEN_json).tobytes(), BLOCK_GEN_bytes)
+    assert dict_cmp(Block.frombytes(BLOCK_GEN_bytes).tojson(), BLOCK_GEN_json)
+    assert bin_cmp(Block.fromjson(  BLOCK_GEN_json).tobytes(), BLOCK_GEN_bytes)
     assert dict_cmp(Block.frombytes(BLOCK_HT1_bytes).tojson(), BLOCK_HT1_json)
     assert bin_cmp(Block.fromjson(  BLOCK_HT1_json).tobytes(), BLOCK_HT1_bytes)
     assert dict_cmp(Block.frombytes(BLOCK_1_6_bytes).tojson(), BLOCK_1_6_json)
