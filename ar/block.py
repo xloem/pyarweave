@@ -23,11 +23,11 @@ from . import INITIAL_VDF_DIFFICULTY
 # 2.0       [X]         [X]         [X]         [X]         unstarted   unstarted
 # 2.4       [X]         [X]         [X]         [X]         unstarted   unstarted
 # 2.5       [X]         [X]         [X]         [X]         notes       unstarted
-# 2.6       drafted     [ ]         [ ]         [ ]         unstarted   unstarted
-# 2.6.8     drafted     [ ]         [ ]         [ ]         unstarted   unstarted
-# 2.7       drafted     [ ]         [ ]         [ ]         unstarted   unstarted
-# 2.7.1     drafted     [ ]         [ ]         [ ]         unstarted   unstarted
-# 2.8       drafted     [ ]         [ ]         [ ]         unstarted   unstarted
+# 2.6       drafted     drafted     drafted     drafted     unstarted   unstarted
+# 2.6.8     drafted     drafted     [ ]         [ ]         unstarted   unstarted
+# 2.7       drafted     drafted     [ ]         [ ]         unstarted   unstarted
+# 2.7.1     drafted     drafted     [ ]         [ ]         unstarted   unstarted
+# 2.8       drafted     drafted     [ ]         [ ]         unstarted   unstarted
 
 TIMESTAMP_FIELD_SIZE_LIMIT = 12
 
@@ -436,8 +436,14 @@ class Block(AutoRaw):
             self.partition_upper_bound = partition_upper_bound
             self.next_partition_upper_bound = next_partition_upper_bound
             self.global_step_number = global_step_number
-            self.last_step_checkpoints = last_step_checkpoints
-            self.steps = steps
+            if last_step_checkpoints and type(last_step_checkpoints[0]) is str:
+                self.last_step_checkpoints = last_step_checkpoints
+            else:
+                self.last_step_checkpoints_raw = last_step_checkpoints
+            if steps and type(steps[0]) is str:
+                self.steps = steps
+            else:
+                self.steps_raw = steps
 
             # 2.7
 
@@ -479,7 +485,7 @@ class Block(AutoRaw):
     def fromjson(cls, data):
         kwparams = {**data}
 
-        # process objects, convert integer strings to integers
+        # process objects, convert integer strings to integers, rename fields
         for param in ['poa', 'poa2']:
             poakwparams = kwparams.get(param)
             if poakwparams is not None:
@@ -490,11 +496,11 @@ class Block(AutoRaw):
         for param in ['nonce_limiter_info']:
             nlikwparams = kwparams.get(param)
             if nlikwparams is not None:
-                for param2 in [
-                    'partition_upper_bound', 'next_partition_upper_bound',
-                    'global_step_number'
-                ]:
-                    nlikwparams[param2] = int(nlikwparams[param2])
+                nlikwparams['global_step_number'] = int(nlikwparams['global_step_number'])
+                # rename fields
+                nlikwparams['partition_upper_bound'] = int(nlikwparams.pop('zone_upper_bound'))
+                nlikwparams['next_partition_upper_bound'] = int(nlikwparams.pop('next_zone_upper_bound'))
+                nlikwparams['steps'] = nlikwparams.pop('checkpoints')
                 kwparams[param] = cls.NonceLimiterInfo(**nlikwparams)
         for param in ['usd_to_ar_rate', 'scheduled_usd_to_ar_rate']:
             lst = kwparams.get(param)
@@ -514,9 +520,6 @@ class Block(AutoRaw):
             if str is not None:
                 kwparams[param] = int(str)
 
-        # rename fields
-        # no renames known needed at this time
-
         # remove internal fields
         kwparams.pop('tx_tree', None)
 
@@ -528,7 +531,7 @@ class Block(AutoRaw):
         block = cls.fromstream(stream)
         assert stream.tell() == len(bytes)
         return block
-            
+
     @classmethod
     def fromstream(cls, stream):
         blk = cls(
@@ -652,12 +655,59 @@ class Block(AutoRaw):
 
     def tojson(self):
         json = {}
+        if self.height >= FORK_2_6:
+            json.update({
+                'hash_preimage': self.hash_preimage,
+                'recall_byte': str(self.recall_byte),
+                'reward': str(self.reward),
+                'previous_solution_hash': self.previous_solution_hash,
+                'partition_number': self.partition_number,
+                'nonce_limiter_info': {
+                    'output': self.nonce_limiter_info.output,
+                    'global_step_number': self.nonce_limiter_info.global_step_number,
+                    'seed': self.nonce_limiter_info.seed,
+                    'next_seed': self.nonce_limiter_info.next_seed,
+                    'zone_upper_bound': self.nonce_limiter_info.partition_upper_bound,
+                    'next_zone_upper_bound': self.nonce_limiter_info.next_partition_upper_bound,
+                    'prev_output': self.nonce_limiter_info.prev_output,
+                    'last_step_checkpoints': self.nonce_limiter_info.last_step_checkpoints,
+                    'checkpoints': self.nonce_limiter_info.steps,
+                },
+                'poa2': {
+                    'option': str(self.poa.option),
+                    'tx_path': self.poa.tx_path,
+                    'data_path': self.poa.data_path,
+                    'chunk': self.poa.chunk,
+                },
+                'signature': self.signature,
+                'reward_key': self.reward_key,
+                'price_per_gib_minute': str(self.price_per_gib_minute),
+                'scheduled_price_per_gib_minute': str(self.scheduled_price_per_gib_minute),
+                'reward_history_hash': self.reward_history_hash,
+                'debt_supply': str(self.debt_supply),
+                'kryder_plus_rate_multiplier': str(self.kryder_plus_rate_multiplier),
+                'kryder_plus_rate_multiplier_latch': str(self.kryder_plus_rate_multiplier_latch),
+                'denomination': str(self.denomination),
+                'redenomination_height': self.redenomination_height,
+                'double_signing_proof': {
+                    'key': self.double_signing_proof.key,
+                    'signature1': self.double_signing_proof.signature1,
+                    'cumulative_diff1': self.double_signing_proof.cumulative_diff1,
+                    'previous_cumulative_diff1': self.double_signing_proof.previous_cumulative_diff1,
+                    'preimage1': self.double_signing_proof.preimage1,
+                    'signature2': self.double_signing_proof.signature2,
+                    'cumulative_diff2': self.double_signing_proof.cumulative_diff2,
+                    'previous_cumulative_diff2': self.double_signing_proof.previous_cumulative_diff2,
+                    'preimage2': self.double_signing_proof.preimage2,
+                } if self.double_signing_proof else {},
+                'previous_cumulative_diff': str(self.previous_cumulative_diff),
+            })
         if self.height >= FORK_2_5:
             json.update({
-            'usd_to_ar_rate': [str(value) for value in self.usd_to_ar_rate],
-            'scheduled_usd_to_ar_rate': [str(value) for value in self.scheduled_usd_to_ar_rate],
-            'packing_2_5_threshold': str(self.packing_2_5_threshold),
-            'strict_data_split_threshold': str(self.strict_data_split_threshold),
+                'usd_to_ar_rate': [str(value) for value in self.usd_to_ar_rate],
+                'scheduled_usd_to_ar_rate': [str(value) for value in self.scheduled_usd_to_ar_rate],
+                'packing_2_5_threshold': str(self.packing_2_5_threshold),
+                'strict_data_split_threshold': str(self.strict_data_split_threshold),
             })
         json.update({
             'nonce': self.nonce,
@@ -779,15 +829,96 @@ class Block(AutoRaw):
         stream.write(arbinenc(self.poa.chunk_raw,                  24))
         stream.write(arbinenc(self.poa.tx_path_raw,                24))
         stream.write(arbinenc(self.poa.data_path_raw,              24))
-        stream.write(len(self.tags).to_bytes(2, 'big'))
+        stream.write(erlintenc(len(self.tags),                     16))
         for tag in self.tags:
             stream.write(arbinenc(tag,                             16))
-        stream.write(len(self.txs).to_bytes(2, 'big'))
+        stream.write(erlintenc(len(self.txs),                      16))
         for tx in self.txs[::-1]:
             if type(tx) is Transaction:
                 stream.write(tx.tobytes())
             else:
                 stream.write(arbinenc(b64dec(tx),                  24))
+
+        if self.height >= FORK_2_6:
+            stream.write(arbinenc(self.hash_preimage_raw,           8))
+            stream.write(arintenc(self.recall_byte,                16))
+            stream.write(arintenc(self.reward,                      8))
+            stream.write(arbinenc(self.signature_raw,              16))
+            stream.write(arintenc(self.recall_byte_2,              16))
+            stream.write(arbinenc(self.previous_solution_hash_raw,  8))
+            stream.write(erlintenc(self.partition_number,         256))
+            stream.write(self.nonce_limiter_info.output_raw)
+            stream.write(erlintenc(
+                self.nonce_limiter_info.global_step_number,        64))
+            stream.write(self.nonce_limiter_info.seed_raw)
+            stream.write(self.nonce_limiter_info.next_seed_raw)
+            stream.write(arbinenc(
+                self.nonce_limiter_info.prev_output_raw,            8))
+            stream.write(erlintenc(
+                self.nonce_limiter_info.partition_upper_bound,    256))
+            stream.write(erlintenc(
+                self.nonce_limiter_info.next_partition_upper_bound,256))
+            stream.write(erlintenc(
+                len(self.nonce_limiter_info.last_step_checkpoints),16))
+            for last_step_checkpoint in (
+                self.nonce_limiter_info.last_step_checkpoints_raw
+            )[::-1]:
+                stream.write(last_step_checkpoint)
+            stream.write(erlintenc(len(steps),                     16))
+            for step in self.nonce_limiter_info.steps_raw[::-1]:
+                stream.write(step)
+            stream.write(arbinenc(self.poa2.chunk_raw,             24))
+            stream.write(arbinenc(self.reward_key_raw,             16))
+            stream.write(arbinenc(self.poa2.tx_path_raw,           24))
+            stream.write(arbinenc(self.poa2.data_path_raw,         24))
+            stream.write(arintenc(self.price_per_gib_minute,        8))
+            stream.write(arintenc(
+                self.scheduled_price_per_gib_minute,                8))
+            stream.write(self.reward_history_hash_raw)
+            stream.write(arintenc(self.debt_supply,                 8))
+            stream.write(erlintenc(
+                self.kryder_plus_rate_multiplier,                  24))
+            stream.write(erlintenc(
+                self.kryder_plus_rate_multiplier_latch,             8))
+            stream.write(erlintenc(self.denomination,              24))
+            stream.write(arintenc(self.redenomination_height,       8))
+            stream.write(arintenc(self.previous_cumulative_diff,   16))
+            stream.write(erlintenc(
+                1 if self.double_signing_proof else 0,              8))
+            if self.double_signing_proof:
+                stream.write(self.double_signing_proof.key_raw)
+                stream.write(self.double_signing_proof.signature1_raw)
+                stream.write(arintenc(
+                    self.double_signing_proof.cumulative_diff1,    16))
+                stream.write(arintenc(
+                    self.double_signing_proof.previous_cumulative_diff1,
+                                                                   16))
+                stream.write(self.double_signing_proof.preimage1_raw)
+                stream.write(self.double_signing_proof.signature2_raw)
+                stream.write(arintenc(
+                    self.double_signing_proof.cumulative_diff2,    16))
+                stream.write(arintenc(self.
+                    double_signing_proof.previous_cumulative_diff2,16))
+                stream.write(self.double_signing_proof.preimage2_raw)
+
+        if self.height >= FORK_2_7:
+            stream.write(arintenc(
+                self.merkle_rebase_support_threshold,              16))
+            stream.write(self.chunk_hash_raw)
+            stream.write(arbinenc(self.chunk2_hash_raw,             8))
+            stream.write(self.block_time_history_hash_raw)
+            stream.write(arintenc(
+                self.nonce_limiter_info.vdf_difficulty,             8))
+            stream.write(arintenc(
+                self.nonce_limiter_info.next_vdf_difficulty,        8))
+
+        if self.height >= FORK_2_8:
+            stream.write(erlintenc(self.packing_difficulty,         8))
+            stream.write(arbinenc(self.unpacked_chunk_hash_raw,     8))
+            stream.write(arbinenc(self.unpacked_chunk2_hash_raw,    8))
+            stream.write(arbinenc(self.poa.unpacked_chunk_raw,     24))
+            stream.write(arbinenc(self.poa2.unpacked_chunk_raw,    24))
+
         return stream.getvalue()
 
     # ar_node_utils.erlt / validate_block
@@ -837,8 +968,8 @@ class Block(AutoRaw):
             ]
             if self.height >= FORK_2_5:
                 props2 = [
-                    str(self.usd_to_ar_rate[0]).encode(),   
-                    str(self.usd_to_ar_rate[1]).encode(),   
+                    str(self.usd_to_ar_rate[0]).encode(),
+                    str(self.usd_to_ar_rate[1]).encode(),
                     str(self.scheduled_usd_to_ar_rate[0]).encode(),
                     str(self.scheduled_usd_to_ar_rate[1]).encode(),
                     str(self.packing_threshold).encode(),
@@ -870,7 +1001,7 @@ class Block(AutoRaw):
             ])
     def _encode_tags(self):
         if self.height >= FORK_2_5:
-            return 
+            return
 
 
 if __name__ == '__main__':
@@ -981,3 +1112,6 @@ if __name__ == '__main__':
     assert bin_cmp(Block.fromjson(  BLOCK_2_4_json).tobytes(), BLOCK_2_4_bytes)
     assert dict_cmp(Block.frombytes(BLOCK_2_5_bytes).tojson(), BLOCK_2_5_json)
     assert bin_cmp(Block.fromjson(  BLOCK_2_5_json).tobytes(), BLOCK_2_5_bytes)
+
+    #assert bin_cmp(Block.fromjson(  BLOCK_2_6_json).tobytes(), BLOCK_2_6_bytes)
+    #assert dict_cmp(Block.frombytes(BLOCK_2_6_bytes).tojson(), BLOCK_2_6_json)

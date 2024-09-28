@@ -95,9 +95,11 @@ def arintdec(stream, bits):
     return int.from_bytes(int_raw, 'big')
 
 class AutoRaw:
+    def __getattr(self, attr):
+        return super().__getattribute__(attr)
     def __hasattr(self, attr):
         try:
-            super().__getattribute__(attr)
+            self.__getattr(attr)
             return True
         except AttributeError:
             return False
@@ -111,12 +113,28 @@ class AutoRaw:
         if not self.__hasattr(attr):
             if attr.endswith('_raw'):
                 str_attr = attr[:-4]
-                if not self.__hasprop(str_attr) and self.__hasattr(str_attr):
-                    return b64dec(super().__getattribute__(str_attr))
+                if not self.__hasprop(str_attr):
+                    try:
+                        str_val = self.__getattr(str_attr)
+                    except:
+                        pass
+                    else:
+                        if type(str_val) in [list, tuple]:
+                            return [b64dec(item) for item in str_val]
+                        else:
+                            return b64dec(str_val)
             else:
                 raw_attr = attr + '_raw'
-                if not self.__hasprop(raw_attr) and self.__hasattr(raw_attr):
-                    return b64enc(super().__getattribute__(raw_attr))
+                if not self.__hasprop(raw_attr):
+                    try:
+                        raw_val = self.__getattr(raw_attr)
+                    except:
+                        pass
+                    else:
+                        if type(raw_val) in [list, tuple]:
+                            return [b64enc(item) for item in raw_val]
+                        else:
+                            return b64enc(raw_val)
         return super().__getattribute__(attr)
     def __setattr__(self, attr, val):
         if not self.__hasattr(attr):
