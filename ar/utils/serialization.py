@@ -86,3 +86,39 @@ def arintdec(stream, bits):
     if len(int_raw) != size:
         raise ArweaveException('stream terminated early')
     return int.from_bytes(int_raw, 'big')
+
+class AutoRaw:
+    def __hasattr(self, attr):
+        try:
+            super().__getattribute__(attr)
+            return True
+        except AttributeError:
+            return False
+    def __hasprop(self, attr):
+        try:
+            clsattr = getattr(type(self), attr)
+            return type(clsattr) is property
+        except AttributeError:
+            return False
+    def __getattr__(self, attr):
+        if not self.__hasattr(attr):
+            if attr.endswith('_raw'):
+                str_attr = attr[:-4]
+                if not self.__hasprop(str_attr) and self.__hasattr(str_attr):
+                    return b64dec(super().__getattribute__(str_attr))
+            else:
+                raw_attr = attr + '_raw'
+                if not self.__hasprop(raw_attr) and self.__hasattr(raw_attr):
+                    return b64enc(super().__getattribute__(raw_attr))
+        return super().__getattribute__(attr)
+    def __setattr__(self, attr, val):
+        if not self.__hasattr(attr):
+            if attr.endswith('_raw'):
+                str_attr = attr[:-4]
+                if not self.__hasprop(str_attr) and self.__hasattr(str_attr):
+                    return super().__setattr__(str_attr, b64enc(val))
+            else:
+                raw_attr = attr + '_raw'
+                if not self.__hasprop(raw_attr) and self.__hasattr(raw_attr):
+                    return super().__setattr__(raw_attr, b64dec(val))
+        return super().__setattr__(attr, val)

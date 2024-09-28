@@ -3,81 +3,472 @@ import io
 from ar.utils import (
     erlintenc, arbinenc, arintenc,
     erlintdec, arbindec, arintdec,
-    b64enc_if_not_str, b64enc, b64dec
+    b64enc_if_not_str, b64dec_if_not_bytes,
+    b64enc, b64dec, AutoRaw
 )
 from ar.utils.deep_hash import deep_hash
 from .chunk import Chunk
 from .transaction import Transaction
-from . import FORK_2_4, FORK_2_5, FORK_2_6, FORK_2_7, FORK_2_8
+from . import FORK_1_8, FORK_2_0, FORK_2_4, FORK_2_5, FORK_2_6, FORK_2_6_8, FORK_2_7, FORK_2_7_1, FORK_2_8
+from . import INITIAL_VDF_DIFFICULTY
 
 # STATUS
 # MINING IS NOT PLANNED AT THIS TIME
 # FORK      FROMBYTES   TOBYTES     FROMJSON    TOJSON      VALIDATION  MINING
 # gen       started     [ ]         [ ]         [ ]         unstarted   unstarted
-# 2.4       started     [ ]         [ ]         [ ]         unstarted   unstarted
+# 1.8       started     [ ]         [ ]         [ ]         unstarted   unstarted
+# 2.0       started     [ ]         [ ]         [ ]         unstarted   unstarted
+# 2.4       drafted     [ ]         [ ]         [ ]         unstarted   unstarted
 # 2.5       [X]         [X]         [X]         [X]         notes       unstarted
-# 2.6       started     [ ]         [ ]         [ ]         unstarted   unstarted
-# 2.7       started     [ ]         [ ]         [ ]         unstarted   unstarted
-# 2.8       started     [ ]         [ ]         [ ]         unstarted   unstarted
+# 2.6       drafted     [ ]         [ ]         [ ]         unstarted   unstarted
+# 2.6.8     drafted     [ ]         [ ]         [ ]         unstarted   unstarted
+# 2.7       drafted     [ ]         [ ]         [ ]         unstarted   unstarted
+# 2.7.1     drafted     [ ]         [ ]         [ ]         unstarted   unstarted
+# 2.8       drafted     [ ]         [ ]         [ ]         unstarted   unstarted
 
-class Block:
-    def __init__(self, indep_hash, prev_block, timestamp, nonce,
-                 height, diff, cumulative_diff, last_retarget,
-                 hash, block_size, weave_size, reward_addr,
-                 tx_root, wallet_list, hash_list_merkle, reward_pool,
-                 packing_threshold, strict_chunk_threshold,
-                 usd_to_ar_rate, scheduled_usd_to_ar_rate,
-                 poa_option, poa_chunk, poa_tx_path, poa_data_path,
-                 tags = [], txs = []):
-        self.indep_hash = b64enc_if_not_str(indep_hash)
-        self.prev_block = b64enc_if_not_str(prev_block)
-        self.timestamp = timestamp
+TIMESTAMP_FIELD_SIZE_LIMIT = 12
+
+class Block(AutoRaw):
+    '''
+        github.com/arweave
+        apps/arweave/include/ar.hrl
+        revision: N.2.7.4-22-g36dff9e2
+        non-gossipped fields are not included in this class
+
+%% @doc A block (txs is a list of tx records) or a block shadow (txs is a list of
+%% transaction identifiers).
+-record(block, {
+	%% The nonce chosen to solve the mining problem.
+	nonce,
+	%% `indep_hash` of the previous block in the weave.
+	previous_block = <<>>,
+	%% POSIX time of block discovery.
+	timestamp,
+	%% POSIX time of the last difficulty retarget.
+	last_retarget,
+	%% Mining difficulty, the number `hash` must be greater than.
+	diff,
+	height = 0,
+	%% Mining solution hash.
+	hash = <<>>,
+	%% The block identifier.
+	indep_hash,
+	%% The list of transaction identifiers or transactions (tx records).
+	txs = [],
+	%% The Merkle root of the tree of Merkle roots of block's transactions' data.
+	tx_root = <<>>,
+	%% The Merkle tree of Merkle roots of block's transactions' data. Used internally,
+	%% not gossiped.
+	tx_tree = [],
+	%% Deprecated. Not used, not gossiped.
+	hash_list = unset,
+	%% The Merkle root of the block index - the list of
+	%% {`indep_hash`, `weave_size`, `tx_root`} triplets describing the past blocks
+	%% excluding this one.
+	hash_list_merkle = <<>>,
+	%% The root hash of the Merkle Patricia Tree containing all wallet (account) balances and
+	%% the identifiers of the last transactions posted by them, if any
+	wallet_list,
+	%% The mining address. Before the fork 2.6, either the atom 'unclaimed' or
+	%% a SHA2-256 hash of the RSA PSS public key. In 2.6, 'unclaimed' is not supported.
+    reward_addr = unclaimed,
+	%% Miner-specified tags (a list of strings) to store with the block.
+    tags = [],
+	%% The number of Winston in the endowment pool.
+	reward_pool,
+	%% The total number of bytes whose storage is incentivized.
+	weave_size,
+	%% The total number of bytes added to the storage incentivization by this block.
+	block_size,
+	%% The sum of the average number of hashes computed by the network to produce the past
+	%% blocks including this one.
+	cumulative_diff,
+	%% The list of {{`tx_id`, `data_root`}, `offset`} pairs. Used internally, not gossiped.
+	size_tagged_txs = unset,
+	%% The first proof of access.
+	poa = #poa{},
+	%% The estimated USD to AR conversion rate used in the pricing calculations.
+	%% A tuple {Dividend, Divisor}.
+	%% Used until the transition to the new fee calculation method is complete.
+	usd_to_ar_rate,
+	%% The estimated USD to AR conversion rate scheduled to be used a bit later, used to
+	%% compute the necessary fee for the currently signed txs. A tuple {Dividend, Divisor}.
+	%% Used until the transition to the new fee calculation method is complete.
+	scheduled_usd_to_ar_rate,
+	%% The offset on the weave separting the data which has to be packed for mining after the
+	%% fork 2.5 from the data which does not have to be packed yet. It is set to the
+	%% weave_size of the 50th previous block at the hard fork block and moves down at a speed
+	%% of ?PACKING_2_5_THRESHOLD_CHUNKS_PER_SECOND chunks/s. The motivation behind the
+	%% threshold is a smooth transition to the new algorithm - big miners who might not want
+	%% to adopt the new algorithm are still incentivized to upgrade and stay in the network
+	%% for some time.
+	packing_2_5_threshold,
+	%% The offset on the weave separating the data which has to be split according to the
+	%% stricter rules introduced in the fork 2.5 from the historical data. The new rules
+	%% require all chunk sizes to be 256 KiB excluding the last or the only chunks of the
+	%% corresponding transactions and the second last chunks of their transactions where they
+	%% exceed 256 KiB in size when combined with the following (last) chunk. Furthermore, the
+	%% new chunks may not be smaller than their Merkle proofs unless they are the last chunks.
+	%% The motivation is to be able to put all chunks into 256 KiB buckets. It makes all
+	%% chunks equally attractive because they have equal chances of being chosen as recall
+	%% chunks. Moreover, every chunk costs the same in terms of storage and computation
+	%% expenditure when packed (smaller chunks are simply padded before packing).
+	strict_data_split_threshold,
+	%% Used internally by tests.
+	account_tree,
+
+	%%
+	%% The fields below were added at the fork 2.6.
+	%%
+
+	%% A part of the solution hash preimage. Used for the initial solution validation
+	%% without a data chunk.
+	hash_preimage = <<>>,
+	%% The absolute recall offset.
+	recall_byte,
+	%% The total amount of winston the miner receives for this block.
+	reward = 0,
+	%% The solution hash of the previous block.
+	previous_solution_hash = <<>>,
+	%% The sequence number of the mining partition where the block was found.
+	partition_number,
+	%% The nonce limiter information.
+	nonce_limiter_info = #nonce_limiter_info{},
+	%% The second proof of access (empty when the solution was found with only one chunk).
+	poa2 = #poa{},
+	%% The absolute second recall offset.
+	recall_byte2,
+	%% The block signature.
+	signature = <<>>,
+	%% {KeyType, PubKey} - the public key the block was signed with.
+	%% The only supported KeyType is currently {rsa, 65537}.
+	reward_key,
+	%% The estimated number of Winstons it costs the network to store one gibibyte
+	%% for one minute.
+	price_per_gib_minute = 0,
+	%% The updated estimation of the number of Winstons it costs the network to store
+	%% one gibibyte for one minute.
+	scheduled_price_per_gib_minute = 0,
+	%% The recursive hash of the network hash rates, block rewards, and mining addresses of
+	%% the latest ?REWARD_HISTORY_BLOCKS blocks.
+	reward_history_hash,
+	%% The network hash rates, block rewards, and mining addresses from the latest
+	%% ?REWARD_HISTORY_BLOCKS + ?STORE_BLOCKS_BEHIND_CURRENT blocks. Used internally, not gossiped.
+	reward_history = [],
+	%% The total number of Winston emitted when the endowment was not sufficient
+	%% to compensate mining.
+	debt_supply = 0,
+	%% An additional multiplier for the transaction fees doubled every time the
+	%% endowment pool becomes empty.
+	kryder_plus_rate_multiplier = 1,
+	%% A lock controlling the updates of kryder_plus_rate_multiplier. It is set to 1
+	%% after the update and back to 0 when the endowment pool is bigger than
+	%% ?RESET_KRYDER_PLUS_LATCH_THRESHOLD (redenominated according to the denomination
+	%% used at the time).
+	kryder_plus_rate_multiplier_latch = 0,
+	%% The code for the denomination of AR in base units.
+	%% 1 is the default which corresponds to the original denomination of 1^12 base units.
+	%% Every time the available supply falls below ?REDENOMINATION_THRESHOLD,
+	%% the denomination is multiplied by 1000, the code is incremented.
+	%% Transaction denomination code must not exceed the block's denomination code.
+	denomination = 1,
+	%% The biggest known redenomination height (0 means there were no redenominations yet).
+	redenomination_height = 0,
+	%% The proof of signing the same block several times or extending two equal forks.
+	double_signing_proof,
+	%% The cumulative difficulty of the previous block.
+	previous_cumulative_diff = 0,
+
+	%%
+	%% The fields below were added at the fork 2.7 (note that 2.6.8 was a hard fork too).
+	%%
+
+	%% The merkle trees of the data written after this weave offset may be constructed
+	%% in a way where some subtrees are "rebased", i.e., their offsets start from 0 as if
+	%% they were the leftmost subtree of the entire tree. The merkle paths for the chunks
+	%% belonging to the subtrees will include a 32-byte 0-sequence preceding the pivot to
+	%% the corresponding subtree. The rebases allow for flexible combination of data before
+	%% registering it on the weave, extremely useful e.g., for the bundling services.
+	merkle_rebase_support_threshold,
+	%% The SHA2-256 of the packed chunk.
+	chunk_hash,
+	%% The SHA2-256 of the packed chunk2, when present.
+	chunk2_hash,
+
+	%% The hashes of the history of block times (in seconds), VDF times (in steps),
+	%% and solution types (one-chunk vs two-chunk) of the latest
+	%% ?BLOCK_TIME_HISTORY_BLOCKS blocks.
+	block_time_history_hash,
+	%% The block times (in seconds), VDF times (in steps), and solution types (one-chunk vs
+	%% two-chunk) of the latest ?BLOCK_TIME_HISTORY_BLOCKS blocks.
+	%% Used internally, not gossiped.
+	block_time_history = [], % {block_interval, vdf_interval, chunk_count}
+
+	%%
+%% The fields below were added at the fork 2.8.
+	%%
+
+	%% The packing difficulty of the replica the block was mined with.
+	%% Applies to both poa1 and poa2.
+	%%
+	%% Packing difficulty 0 denotes the usual pre-2.8 packing scheme.
+	%% Packing difficulty 1 refers to the new composite packing of approximately the same
+	%% computational cost as the difficulty 0 packing. Packing difficulty 2 is the composite
+	%% packing where each sub-chunk is hashed twice as many times. The maximum allowed
+	%% value is 32.
+	%%
+	%% When packing_difficulty >= 1, both poa1 and poa2 contain the unpacked chunks.
+	%% The values of the "chunk" fields are now 8192-byte packed sub-chunks.
+	packing_difficulty = 0,
+	%% The SHA2-256 of the unpacked 0-padded (if less than 256 KiB) chunk.
+	%% undefined when packing_difficulty == 0, has a value otherwise.
+	unpacked_chunk_hash,
+	%% The SHA2-256 of the unpacked 0-padded (if less than 256 KiB) chunk2.
+	%% undefined when packing_difficulty == 0 or recall_byte2 == undefined,
+	%% has a value otherwise.
+	unpacked_chunk2_hash,
+
+	%% Used internally, not gossiped. Convenient for validating potentially non-unique
+	%% merkle proofs assigned to the different signatures of the same solution
+	%% (see validate_poa_against_cached_poa in ar_block_pre_validator.erl).
+	poa_cache,
+	%% Used internally, not gossiped. Convenient for validating potentially non-unique
+	%% merkle proofs assigned to the different signatures of the same solution
+	%% (see validate_poa_against_cached_poa in ar_block_pre_validator.erl).
+	poa2_cache,
+
+	%% Used internally, not gossiped.
+	receive_timestamp
+}).
+
+%% @doc A chunk with the proofs of its presence in the weave at a particular offset.
+-record(poa, {
+	%% DEPRECATED. Not used since the fork 2.4.
+	option = 1,
+	%% The path through the Merkle tree of transactions' "data_root"s.
+	%% Proofs the inclusion of the "data_root" in the corresponding "tx_root"
+%% under the particular offset.
+	tx_path = <<>>,
+	%% The path through the Merkle tree of the identifiers of the chunks
+	%% of the corresponding transaction. Proofs the inclusion of the chunk
+	%% in the corresponding "data_root" under a particular offset.
+	data_path = <<>>,
+	%% When packing difficulty is 0 chunk stores a full ?DATA_CHUNK_SIZE-sized packed chunk.
+	%% When packing difficulty >= 1, chunk stores a ?COMPOSITE_PACKING_SUB_CHUNK_SIZE-sized
+	%% packed sub-chunk.
+	chunk = <<>>,
+	%% When packing difficulty is 0 unpacked_chunk is <<>>.
+	%% When packing difficulty >= 1, unpacked_chunk stores a full 0-padded
+	%% ?DATA_CHUNK_SIZE-sized unpacked chunk.
+	unpacked_chunk = <<>>
+}).
+
+%% @doc The information which simplifies validation of the nonce limiting procedures.
+-record(nonce_limiter_info, {
+	%% The output of the latest step - the source of the entropy for the mining nonces.
+	output = <<>>,
+	%% The output of the latest step of the previous block.
+	prev_output = <<>>,
+	%% The hash of the latest block mined below the current reset line.
+	seed = <<>>,
+	%% The hash of the latest block mined below the future reset line.
+	next_seed = <<>>,
+	%% The weave size of the latest block mined below the current reset line.
+	partition_upper_bound = 0,
+	%% The weave size of the latest block mined below the future reset line.
+	next_partition_upper_bound = 0,
+	%% The global sequence number of the nonce limiter step at which the block was found.
+	global_step_number = 1,
+	%% ?VDF_CHECKPOINT_COUNT_IN_STEP checkpoints from the most recent step in the nonce
+%% limiter process.
+	last_step_checkpoints = [],
+	%% A list of the output of each step of the nonce limiting process. Note: each step
+	%% has ?VDF_CHECKPOINT_COUNT_IN_STEP checkpoints, the last of which is that step's output.
+	steps = [],
+
+	%% The fields added at the fork 2.7
+
+	%% The number of SHA2-256 iterations in a single VDF checkpoint. The protocol aims to keep the
+	%% checkoint calculation time to around 40ms by varying this paramter. Note: there are
+	%% 25 checkpoints in a single VDF step - so the protocol aims to keep the step calculation at
+	%% 1 second by varying this parameter.
+	vdf_difficulty = ?INITIAL_VDF_DIFFICULTY,
+	%% The VDF difficulty scheduled for to be applied after the next VDF reset line.
+	next_vdf_difficulty = ?INITIAL_VDF_DIFFICULTY
+}).
+    
+    '''
+    def __init__(
+        self,
+        nonce, previous_block, timestamp,
+        last_retarget, diff, height, hash,
+        indep_hash, txs, tx_root, # tx_tree, hash_list,
+        hash_list_merkle,
+        wallet_list, reward_addr, tags, reward_pool,
+        weave_size, block_size, cumulative_diff,
+        # size_tagged_txs,
+        poa, usd_to_ar_rate, scheduled_usd_to_ar_rate,
+        packing_2_5_threshold,
+        strict_data_split_threshold, # account_tree,
+        # 2.6
+        hash_preimage = '', recall_byte = None, reward = 0,
+        previous_solution_hash = '', partition_number = None,
+        nonce_limiter_info = None, poa2 = None, recall_byte2 = None,
+        signature = '', reward_key = None,
+        price_per_gib_minute = 0, scheduled_price_per_gib_minute = 0,
+        reward_history_hash = None, # reward_history,
+        debt_supply = 0, kryder_plus_rate_multiplier = 1,
+        kryder_plus_rate_multiplier_latch = 0,
+        denomination = 1, redenomination_height = 0,
+        double_signing_proof = None,
+        previous_cumulative_diff = 0,
+        # 2.7
+        merkle_rebase_support_threshold = None,
+        chunk_hash = None, chunk2_hash = None,
+        block_time_history_hash = None,
+        # block_time_history,
+        # 2.8
+        packing_difficulty = 0,
+        unpacked_chunk_hash = None, unpacked_chunk2_hash = None,
+        # poa_cache, poa2_cache, receive_timestamp
+    ):
         self.nonce = b64enc_if_not_str(nonce)
-        self.height = height
-        self.diff = diff
-        self.cumulative_diff = cumulative_diff
+        self.previous_block = b64enc_if_not_str(previous_block)
+        self.timestamp = timestamp
         self.last_retarget = last_retarget
+        self.diff = diff
+        self.height = height
         self.hash = b64enc_if_not_str(hash)
-        self.block_size = block_size
-        self.weave_size = weave_size
-        self.reward_addr = b64enc_if_not_str(reward_addr)
-        self.tx_root = b64enc_if_not_str(tx_root)
-        self.wallet_list = b64enc_if_not_str(wallet_list)
-        self.hash_list_merkle = b64enc_if_not_str(hash_list_merkle)
-        self.reward_pool = reward_pool
-        self.packing_threshold = packing_threshold
-        self.strict_chunk_threshold = strict_chunk_threshold
-
-        if not isinstance(usd_to_ar_rate, (tuple, list)):
-            usd_to_ar_rate = fractions.Fraction(usd_to_ar_rate)
-            self.usd_to_ar_rate_raw = (usd_to_ar_rate.numerator, usd_to_ar_rate.denominator)
-        else:
-            self.usd_to_ar_rate_raw = usd_to_ar_rate
-
-        if not isinstance(scheduled_usd_to_ar_rate, (tuple, list)):
-            scheduled_usd_to_ar_rate = fractions.Fraction(scheduled_usd_to_ar_rate)
-            self.scheduled_usd_to_ar_rate_raw = (
-                scheduled_usd_to_ar_rate.numerator, scheduled_usd_to_ar_rate.denominator
-            )
-        else:
-            self.scheduled_usd_to_ar_rate_raw = scheduled_usd_to_ar_rate
-
-        self.poa_option = poa_option
-        self.poa_chunk = b64enc_if_not_str(poa_chunk)
-        self.poa_tx_path = b64enc_if_not_str(poa_tx_path)
-        self.poa_data_path = b64enc_if_not_str(poa_data_path)
-
-        self.tags = tags
+        self.indep_hash = b64enc_if_not_str(indep_hash)
         if len(txs) and isinstance(txs[0], (bytes, bytearray)):
             self.txs = [b64enc_if_not_str(tx) for tx in txs[::-1]]
         else:
             self.txs = txs
+        self.tx_root = b64enc_if_not_str(tx_root)
+        self.hash_list_merkle = b64enc_if_not_str(hash_list_merkle)
+        self.wallet_list = b64enc_if_not_str(wallet_list)
+        self.reward_addr = b64enc_if_not_str(reward_addr)
+        self.tags = tags
+        self.reward_pool = reward_pool
+        self.weave_size = weave_size
+        self.block_size = block_size
+        self.cumulative_diff = cumulative_diff
+        self.poa = poa
 
-    def __getattr__(self, attr):
-        if attr.endswith('_raw'):
-            return b64dec(getattr(self, attr[:-4]))
+        if not isinstance(usd_to_ar_rate, (tuple, list)):
+            usd_to_ar_rate = fractions.Fraction(usd_to_ar_rate)
+            self.usd_to_ar_rate_raw = [usd_to_ar_rate.numerator, usd_to_ar_rate.denominator]
         else:
-            return super().__getattr__(attr)
+            self.usd_to_ar_rate_raw = usd_to_ar_rate
+        if not isinstance(scheduled_usd_to_ar_rate, (tuple, list)):
+            scheduled_usd_to_ar_rate = fractions.Fraction(scheduled_usd_to_ar_rate)
+            self.scheduled_usd_to_ar_rate_raw = [
+                scheduled_usd_to_ar_rate.numerator, scheduled_usd_to_ar_rate.denominator
+            ]
+        else:
+            self.scheduled_usd_to_ar_rate_raw = scheduled_usd_to_ar_rate
+
+        self.packing_2_5_threshold = packing_2_5_threshold
+        self.strict_data_split_threshold = strict_data_split_threshold
+
+        # 2.6
+
+        self.hash_preimage = b64enc_if_not_str(hash_preimage)
+        self.recall_byte = recall_byte
+        self.reward = reward
+        self.previous_solution_hash = b64enc_if_not_str(previous_solution_hash)
+        self.partition_number = partition_number
+        if nonce_limiter_info is None:
+            self.nonce_limiter_info = self.NonceLimiterInfo()
+        else:
+            self.nonce_limiter_info = nonce_limiter_info
+        if poa2 is None:
+            self.poa2 = self.POA()
+        else:
+            self.poa2 = poa2
+        self.recall_byte2 = recall_byte2
+        self.signature = b64enc_if_not_str(signature)
+        self.reward_key = b64enc_if_not_str(reward_key)
+        self.price_per_gib_minutes = price_per_gib_minute
+        self.scheduled_price_per_gib_minute = scheduled_price_per_gib_minute
+        self.debt_supply = debt_supply
+        self.kryder_plus_rate_multiplier = kryder_plus_rate_multiplier
+        self.kryder_plus_rate_multiplier_latch = kryder_plus_rate_multiplier_latch
+        self.denomination = denomination
+        self.redenomination_height = redenomination_height
+        self.double_signing_proof = double_signing_proof
+        self.previous_cumulative_diff = previous_cumulative_diff
+
+        # 2.7
+        
+        self.merkle_rebase_support_threshold = merkle_rebase_support_threshold
+        self.chunk_hash = b64enc_if_not_str(chunk_hash)
+        self.chunk2_hash = b64enc_if_not_str(chunk2_hash)
+        
+        # 2.8
+
+        self.packing_difficulty = packing_difficulty
+        self.unpacked_chunk_hash = b64enc_if_not_str(unpacked_chunk_hash)
+        self.unpacked_chunk2_hash = b64enc_if_not_str(unpacked_chunk2_hash)
+
+    class POA(AutoRaw):
+        def __init__(
+            self, option = 1,
+            tx_path = '', data_path = '',
+            chunk = '', unpacked_chunk = '',
+        ):
+            self.option = option
+            self.tx_path = b64enc_if_not_str(tx_path)
+            self.data_path = b64enc_if_not_str(data_path)
+            self.chunk = b64enc_if_not_str(chunk)
+            self.unpacked_chunk = b64enc_if_not_str(unpacked_chunk)
+    class NonceLimiterInfo(AutoRaw):
+        def __init__(
+            self, output = '', prev_output = '', seed = '', next_seed = '',
+            partition_upper_bound = 0, next_partition_upper_bound = 0,
+            global_step_number = 1, last_step_checkpoints = [], steps = [],
+            # 2.7
+            vdf_difficulty = INITIAL_VDF_DIFFICULTY,
+            next_vdf_difficulty = INITIAL_VDF_DIFFICULTY,
+        ):
+            self.output = b64enc_if_not_str(output)
+            self.prev_output = b64enc_if_not_str(prev_output)
+            self.seed = b64enc_if_not_str(seed)
+            self.next_seed = b64enc_if_not_str(next_seed)
+            self.partition_upper_bound = partition_upper_bound
+            self.next_partition_upper_bound = next_partition_upper_bound
+            self.global_step_number = global_step_number
+            self.last_step_checkpoints = last_step_checkpoints
+            self.steps = steps
+
+            # 2.7
+
+            self.vdf_difficulty = vdf_difficulty
+            self.next_vdf_difficulty = next_vdf_difficulty
+    class DoubleSigningProof(list,AutoRaw):
+        def __init__(
+            self, key,
+            signature1, cumulative_diff1,
+            previous_cumulative_diff1, preimage1,
+            signature2, cumulative_diff2,
+            previous_cumulative_diff2, preimage2,
+        ):
+            self.key = b64enc_if_not_str(key)
+            self.signature1 = b64enc_if_not_str(signature1)
+            self.cumulative_diff1 = cumulative_diff1
+            self.previous_cumulative_diff1 = previous_cumulative_diff1
+            self.preimage1 = b64enc_if_not_str(preimage1)
+            self.signature2 = b64enc_if_not_str(signature2)
+            self.cumulative_diff2 = cumulative_diff2
+            self.previous_cumulative_diff2 = previous_cumulative_diff2
+            self.preimage2 = b64enc_if_not_str(preimage2)
+            super([
+                self.key,
+                self.signature1, self.cumulative_diff1,
+                self.previous_cumulative_diff1, self.preimage1,
+                self.signature2, self.cumulative_diff2,
+                self.previous_cumulative_diff2, self.preimage2,
+            ])
 
     @property
     def usd_to_ar_rate(self):
@@ -97,28 +488,42 @@ class Block:
     def fromjson(cls, data):
         kwparams = {**data}
 
-        # pull out poa keys for now
-        kwparams.update({
-            'poa_' + key : value
-            for key, value in kwparams.pop('poa', {}).items()
-        })
-
-        # convert integer strings to integers
-        for param in ('usd_to_ar_rate', 'scheduled_usd_to_ar_rate'):
-            kwparams[param] = [int(amount) for amount in kwparams[param]]
-            kwparams[param] = [int(amount) for amount in kwparams[param]]
-        for param in (
+        # process objects, convert integer strings to integers
+        for param in ['poa', 'poa2']:
+            poakwparams = kwparams.get(param)
+            if poakwparams is not None:
+                for param2 in ['option']:
+                    poakwparams[param2] = int(poakwparams[param2])
+                kwparams[param] = cls.POA(**poakwparams)
+        for param in ['nonce_limiter_info']:
+            nlikwparams = kwparams.get(param)
+            if nlikwparams is not None:
+                for param2 in [
+                    'partition_upper_bound', 'next_partition_upper_bound',
+                    'global_step_number'
+                ]:
+                    nlikwparams[param2] = int(nlikwparams[param2])
+                kwparams[param] = cls.NonceLimiterInfo(**nlikwparams)
+        for param in ['usd_to_ar_rate', 'scheduled_usd_to_ar_rate']:
+            lst = kwparams.get(param)
+            if lst is not None:
+                kwparams[param] = [int(amount) for amount in lst]
+        for param in [
+            'timestamp', 'last_retarget', 'diff', 'height',
+            'reward_pool', 'weave_size' , 'block_size', 'cumulative_diff',
             'packing_2_5_threshold', 'strict_data_split_threshold',
-            'timestamp', 'last_retarget', 'diff', 'reward_pool',
-            'weave_size' , 'block_size', 'cumulative_diff',
-            'poa_option'
-        ):
-            kwparams[param] = int(kwparams[param])
+            'reward', 'price_per_gib_minute', 'schedule_price_per_gib_minute',
+            'debt_supply', 'kryder_plus_rate_multiplier',
+            'kryder_plus_rate_multiplier_latch', 'denomination',
+            'redenomination_height', 'previous_cumulative_diff',
+            'packing_difficulty',
+        ]:
+            str = kwparams.get(param)
+            if str is not None:
+                kwparams[param] = int(str)
 
         # rename
-        kwparams['packing_threshold'] = kwparams.pop('packing_2_5_threshold')
-        kwparams['strict_chunk_threshold'] = kwparams.pop('strict_data_split_threshold')
-        kwparams['prev_block'] = kwparams.pop('previous_block')
+        # no renames known needed at this time
 
         return cls(**kwparams)
 
@@ -131,126 +536,133 @@ class Block:
             
     @classmethod
     def fromstream(cls, stream):
-        indep_hash_raw               = stream.read(48)
-        prev_block_raw               = arbindec(stream,  8)
-        timestamp                    = arintdec(stream,  8)
-        nonce_raw                    = arbindec(stream, 16)
-        height                       = arintdec(stream,  8)
-        diff                         = arintdec(stream, 16)
-        cumulative_diff              = arintdec(stream, 16)
-        last_retarget                = arintdec(stream,  8)
-        hash_raw                     = arbindec(stream,  8)
-        block_size                   = arintdec(stream, 16)
-        weave_size                   = arintdec(stream, 16)
-        reward_addr_raw              = arbindec(stream,  8)
-        tx_root_raw                  = arbindec(stream,  8)
-        wallet_list_raw              = arbindec(stream,  8)
-        hash_list_merkle_raw         = arbindec(stream,  8)
-        reward_pool                  = arintdec(stream,  8)
-        packing_2_5_threshold        = arintdec(stream,  8)
-        strict_data_split_threshold  = arintdec(stream,  8)
-        usd_to_ar_rate_raw           =[arintdec(stream,  8),
-                                       arintdec(stream,  8)]
-        scheduled_usd_to_ar_rate_raw =[arintdec(stream,  8),
-                                       arintdec(stream,  8)]
-        poa_option                   = arintdec(stream,  8)
-        poa_chunk_raw                = arbindec(stream, 24)
-        poa_tx_path_raw              = arbindec(stream, 24)
-        poa_data_path_raw            = arbindec(stream, 24)
+        blk = cls(
+            indep_hash                   = stream.read(48),
+            previous_block               = arbindec(stream,  8),
+            timestamp                    = arintdec(stream,  8),
+            nonce                        = arbindec(stream, 16),
+            height                       = arintdec(stream,  8),
+            diff                         = arintdec(stream, 16),
+            cumulative_diff              = arintdec(stream, 16),
+            last_retarget                = arintdec(stream,  8),
+            hash                         = arbindec(stream,  8),
+            block_size                   = arintdec(stream, 16),
+            weave_size                   = arintdec(stream, 16),
+            reward_addr                  = arbindec(stream,  8),
+            tx_root                      = arbindec(stream,  8),
+            wallet_list                  = arbindec(stream,  8),
+            hash_list_merkle             = arbindec(stream,  8),
+            reward_pool                  = arintdec(stream,  8),
+            packing_2_5_threshold        = arintdec(stream,  8),
+            strict_data_split_threshold  = arintdec(stream,  8),
+            usd_to_ar_rate               =[arintdec(stream,  8),
+                                           arintdec(stream,  8)],
+            scheduled_usd_to_ar_rate     =[arintdec(stream,  8),
+                                           arintdec(stream,  8)],
+            poa = cls.POA(
+                option                   = arintdec(stream,  8),
+                chunk                    = arbindec(stream, 24),
+                tx_path                  = arbindec(stream, 24),
+                data_path                = arbindec(stream, 24),
+                unpacked_chunk           = None,
+            ),
+            tags = [
+                arbindec(stream, 16)
+                for idx in range(erlintdec(stream, 16))
+            ][::-1],
+            # either 32-byte txids or complete txs
+            txs = [
+                Transaction.fromstream(stream)
+                for idx in range(erlintdec(stream, 16))
+            ][::-1],
+        )
 
-        tags_count = erlintdec(stream, 16)
-        tags       = [arbindec(stream, 16) for idx in range(tags_count)]
-
-        # either 32-byte txids or complete txs
-        txs_count = erlintdec(stream, 16)
-        txs = [Transaction.fromstream(stream) for idx in range(txs_count)][::-1]
-
-        if height >= FORK_2_6:
-            hash_preimage  = arbindec(stream, 8)
-            recall_byte    = arintdec(stream, 16)
-            reward         = arintdec(stream, 8)
-            sig            = arbindec(stream, 16)
-            recall_byte_2  = arintdec(stream, 16)
-            prev_soln_hash = arbindec(stream, 8)
-            part_no        = erlintdec(stream, 256)
-            nonce_limiter_output           = stream.read(32)
-            nonce_limiter_global_step_no   = erlintdec(stream, 64)
-            nonce_limiter_seed             = stream.read(48)
-            nonce_limiter_next_seed        = stream.read(48)
-            nonce_limiter_prev_output      = arbindec(stream, 8)
-            nonce_limiter_part_ubound      = erlintdec(stream, 256)
-            nonce_limiter_next_part_ubound = erlintdec(stream, 256)
-            nonce_limiter_last_step_chkpts_ct   = erlintdec(stream, 16)
-            nonce_limiter_last_step_chkpts      = [stream.read(32) for idx in range(nonce_limiter_last_step_chkpts_ct)][::-1]
-            nonce_limiter_steps_ct              = erlintdec(stream, 16)
-            nonce_limiter_steps                 = [stream.read(32) for idx in range(nonce_limiter_steps_ct)][::-1]
-            poa2_chunk           = arbindec(stream, 24)
-            reward_key           = arbindec(stream, 16)
-            poa2_tx_path         = arbindec(stream, 24)
-            poa2_data_path       = arbindec(stream, 24)
-            price_per_gib_min    = arintdec(stream, 8)
-            sched_price_per_gib_min = arintdec(stream, 8)
-            reward_history_hash  = stream.read(32)
-            debt_supply          = arintdec(stream, 8)
-            kryder_plus_rate_mul = erlintdec(stream, 24)
-            kryder_plus_rate_mul_latch = erlintdec(stream, 8)
-            denom                = erlintdec(stream, 24)
-            redenom_height       = arintdec(stream, 8)
-            prev_cumulative_diff = arintdec(stream, 16)
-            double_signing_proof_flag = erlintdec(stream, 8)
+        if blk.height >= FORK_2_6:
+            blk.hash_preimage_raw          = arbindec(stream, 8)
+            blk.recall_byte                = arintdec(stream, 16)
+            blk.reward                     = arintdec(stream, 8)
+            blk.signature_raw              = arbindec(stream, 16)
+            blk.recall_byte_2              = arintdec(stream, 16)
+            blk.previous_solution_hash_raw = arbindec(stream, 8)
+            blk.partition_number           = erlintdec(stream, 256)
+            blk.nonce_limiter_info = cls.NonceLimiterInfo(
+                output                     = stream.read(32),
+                global_step_number         = erlintdec(stream, 64),
+                seed                       = stream.read(48),
+                next_seed                  = stream.read(48),
+                prev_output                = arbindec(stream, 8),
+                partition_upper_bound      = erlintdec(stream, 256),
+                next_partition_upper_bound = erlintdec(stream, 256),
+                last_step_checkpoints      = [
+                    stream.read(32)
+                    for idx in range(erlintdec(stream,16))
+                ][::-1],
+                steps                      = [
+                    stream.read(32)
+                    for idx in range(erlintdec(stream,16))
+                ][::-1],
+                vdf_difficulty             = None,
+                next_vdf_difficulty        = None,
+            )
+            blk.poa2 = cls.POA(
+                option = 1,
+                tx_path = None,
+                data_path = None,
+                chunk            = arbindec(stream, 24),
+                unpacked_chunk = None,
+            )
+            blk.reward_key_raw             = arbindec(stream, 16)
+            blk.poa2.tx_path_raw           = arbindec(stream, 24)
+            blk.poa2.data_path_raw         = arbindec(stream, 24)
+            blk.price_per_gib_minute       = arintdec(stream, 8)
+            blk.scheduled_price_per_gib_minute = arintdec(stream, 8)
+            blk.reward_history_hash_raw    = stream.read(32)
+            blk.debt_supply                = arintdec(stream, 8)
+            blk.kryder_plus_rate_multiplier= erlintdec(stream, 24)
+            blk.kryder_plus_rate_multiplier_latch = erlintdec(stream, 8)
+            blk.denomination               = erlintdec(stream, 24)
+            blk.redenomination_height      = arintdec(stream, 8)
+            blk.previous_cumulative_diff   = arintdec(stream, 16)
+            double_signing_proof_flag  = erlintdec(stream, 8)
             assert double_signing_proof_flag & 1 == double_signing_proof_flag
-            if double_Signing_proof_flag:
-                double_signing_proof_key        = stream.read(512)
-                double_signing_proof_sig1       = stream.read(512)
-                double_signing_proof_cdiff1     = arintdec(stream, 16)
-                double_signing_proof_prevcdiff1 = arintdec(stream, 16)
-                double_signing_proof_preimage1  = stream.read(64)
-                double_signing_proof_sig2       = stream.read(512)
-                double_signing_proof_cdiff2     = arintdec(stream, 16)
-                double_signing_proof_prevcdiff2 = arintdec(stream, 16)
-                double_signing_proof_preimage2  = stream.read(64)
+            if double_signing_proof_flag:
+                blk.double_signing_proof = cls.DoubleSigningProof(
+                    key                       = stream.read(512),
+                    signature1                = stream.read(512),
+                    cumulative_diff1          = arintdec(stream, 16),
+                    previous_cumulative_diff1 = arintdec(stream, 16),
+                    preimage1                 = stream.read(64),
+                    signature2                = stream.read(512),
+                    cumulative_diff2          = arintdec(stream, 16),
+                    previous_cumulative_diff2 = arintdec(stream, 16),
+                    preimage2                 = stream.read(64),
+                )
 
-        if height >= FORK_2_7:
-            merk_rebase_supp_thresh = arintdec(stream, 16)
-            chunk_hash              = stream.read(32)
-            chunk2_hash             = arbindec(stream, 8)
-            block_time_hist_hash    = stream.read(32)
-            nonce_limiter_vdf_difficulty      = arintdec(stream, 8)
-            nonce_limiter_next_vdf_difficulty = arintdec(stream, 8)
+        if blk.height >= FORK_2_7:
+            blk.merkle_rebase_support_threshold        = arintdec(stream, 16)
+            blk.chunk_hash_raw                         = stream.read(32)
+            blk.chunk2_hash_raw                        = arbindec(stream, 8)
+            blk.block_time_history_hash_raw            = stream.read(32)
+            blk.nonce_limiter_info.vdf_difficulty      = arintdec(stream, 8)
+            blk.nonce_limiter_info.next_vdf_difficulty = arintdec(stream, 8)
 
-        if height >= FORK_2_8:
-            packing_difficulty   = erlintdec(stream, 8)
-            unpacked_chunk_hash  = arbindec(stream, 8)
-            unpacked_chunk2_hash = arbindec(stream, 8)
-            poa_unpacked_chunk   = arbindec(stream, 24)
-            poa2_unpacked_chunk  = arbindec(stream, 24)
+        if blk.height >= FORK_2_8:
+            blk.packing_difficulty       = erlintdec(stream, 8)
+            blk.unpacked_chunk_hash_raw  = arbindec(stream, 8)
+            blk.unpacked_chunk2_hash_raw = arbindec(stream, 8)
+            blk.poa.unpacked_chunk_raw   = arbindec(stream, 24)
+            blk.poa2.unpacked_chunk_raw  = arbindec(stream, 24)
 
-        return cls(indep_hash = indep_hash_raw, prev_block = prev_block_raw,
-                   timestamp = timestamp, nonce = nonce_raw, height = height,
-                   diff = diff, cumulative_diff = cumulative_diff,
-                   last_retarget = last_retarget, hash = hash_raw,
-                   block_size = block_size, weave_size = weave_size,
-                   reward_addr = reward_addr_raw, tx_root = tx_root_raw,
-                   wallet_list = wallet_list_raw,
-                   hash_list_merkle = hash_list_merkle_raw,
-                   reward_pool = reward_pool,
-                   packing_threshold = packing_2_5_threshold,
-                   strict_chunk_threshold = strict_data_split_threshold,
-                   usd_to_ar_rate = usd_to_ar_rate_raw,
-                   scheduled_usd_to_ar_rate = scheduled_usd_to_ar_rate_raw,
-                   poa_option = poa_option, poa_chunk = poa_chunk_raw,
-                   poa_tx_path = poa_tx_path_raw,
-                   poa_data_path = poa_data_path_raw,
-                   tags = tags, txs = txs)
+        return blk
 
     def tojson(self):
         return {
             'usd_to_ar_rate': [str(value) for value in self.usd_to_ar_rate_raw],
             'scheduled_usd_to_ar_rate': [str(value) for value in self.scheduled_usd_to_ar_rate_raw],
-            'packing_2_5_threshold': str(self.packing_threshold),
-            'strict_data_split_threshold': str(self.strict_chunk_threshold),
+            'packing_2_5_threshold': str(self.packing_2_5_threshold),
+            'strict_data_split_threshold': str(self.strict_data_split_threshold),
             'nonce': self.nonce,
-            'previous_block': self.prev_block,
+            'previous_block': self.previous_block,
             'timestamp': self.timestamp,
             'last_retarget': self.last_retarget,
             'diff': str(self.diff),
@@ -268,17 +680,17 @@ class Block:
             'cumulative_diff': str(self.cumulative_diff),
             'hash_list_merkle': self.hash_list_merkle,
             'poa': {
-                'option': str(self.poa_option),
-                'tx_path': self.poa_tx_path,
-                'data_path': self.poa_data_path,
-                'chunk': self.poa_chunk
+                'option': self.poa.option,
+                'tx_path': self.poa.tx_path,
+                'data_path': self.poa.data_path,
+                'chunk': self.poa.chunk,
             }
         }
 
     def tobytes(self):
         stream = io.BytesIO()
         stream.write(self.indep_hash_raw)
-        stream.write(arbinenc(self.prev_block_raw,                  8))
+        stream.write(arbinenc(self.previous_block_raw,              8))
         stream.write(arintenc(self.timestamp,                       8))
         stream.write(arbinenc(self.nonce_raw,                      16))
         stream.write(arintenc(self.height,                          8))
@@ -293,16 +705,16 @@ class Block:
         stream.write(arbinenc(self.wallet_list_raw,                 8))
         stream.write(arbinenc(self.hash_list_merkle_raw,            8))
         stream.write(arintenc(self.reward_pool,                     8))
-        stream.write(arintenc(self.packing_threshold,               8))
-        stream.write(arintenc(self.strict_chunk_threshold,          8))
+        stream.write(arintenc(self.packing_2_5_threshold,           8))
+        stream.write(arintenc(self.strict_data_split_threshold,     8))
         stream.write(arintenc(self.usd_to_ar_rate_raw[0],           8))
         stream.write(arintenc(self.usd_to_ar_rate_raw[1],           8))
         stream.write(arintenc(self.scheduled_usd_to_ar_rate_raw[0], 8))
         stream.write(arintenc(self.scheduled_usd_to_ar_rate_raw[1], 8))
-        stream.write(arintenc(self.poa_option,                      8))
-        stream.write(arbinenc(self.poa_chunk_raw,                  24))
-        stream.write(arbinenc(self.poa_tx_path_raw,                24))
-        stream.write(arbinenc(self.poa_data_path_raw,              24))
+        stream.write(arintenc(self.poa.option,                      8))
+        stream.write(arbinenc(self.poa.chunk_raw,                  24))
+        stream.write(arbinenc(self.poa.tx_path_raw,                24))
+        stream.write(arbinenc(self.poa.data_path_raw,              24))
         stream.write(len(self.tags).to_bytes(2, 'big'))
         for tag in self.tags:
             stream.write(arbinenc(tag,                             16))
@@ -348,7 +760,7 @@ class Block:
         if self.height >= FORK_2_4:
             props = [
                 str(self.height).encode(),
-                self.prev_block_raw,
+                self.previous_block_raw,
                 self.tx_root_raw,
                 [
                     b64dec(tx.id if type(tx) is Transaction else tx)
@@ -366,7 +778,7 @@ class Block:
                     str(self.scheduled_usd_to_ar_rate[0]).encode(),
                     str(self.scheduled_usd_to_ar_rate[1]).encode(),
                     str(self.packing_threshold).encode(),
-                    str(self.strict_chunk_threshold),
+                    str(self.strict_data_split_threshold),
                     *props
                 ]
             else:
@@ -375,7 +787,7 @@ class Block:
         else:
             return deep_hash([
                 str(self.height).encode(),
-                self.prev_block_raw,
+                self.previous_block_raw,
                 self.tx_root_raw,
                 [
                     b64dec(tx.id if type(tx) is Transaction else tx)
@@ -386,10 +798,10 @@ class Block:
                 self.reward_addr_raw,
                 [[tag['name'].encode(), tag['value'].encode()] for tag in self.tags],
                 [
-                    str(self.poa_option).encode(),
-                    self.poa_tx_path,
-                    self.poa_data_path,
-                    self.poa_chunk
+                    str(self.poa.option).encode(),
+                    self.poa.tx_path,
+                    self.poa.data_path,
+                    self.poa.chunk,
                 ]
             ])
     def _encode_tags(self):
@@ -404,14 +816,20 @@ if __name__ == '__main__':
         blocks = dict(
             BLOCK_GEN_bytes = peer.block2_height(0),
             BLOCK_GEN_json  = peer.block_height (0),
+            BLOCK_1_8_bytes = peer.block2_height(FORK_1_8),
+            BLOCK_1_8_json  = peer.block_height (FORK_1_8),
             BLOCK_2_4_bytes = peer.block2_height(FORK_2_4),
             BLOCK_2_4_json  = peer.block_height (FORK_2_4),
             BLOCK_2_5_bytes = peer.block2_height(FORK_2_5),
             BLOCK_2_5_json  = peer.block_height (FORK_2_5),
             BLOCK_2_6_bytes = peer.block2_height(FORK_2_6),
             BLOCK_2_6_json  = peer.block_height (FORK_2_6),
+            BLOCK_2_6_8_bytes=peer.block2_height(FORK_2_6_8),
+            BLOCK_2_6_8_json= peer.block_height (FORK_2_6_8),
             BLOCK_2_7_bytes = peer.block2_height(FORK_2_7),
             BLOCK_2_7_json  = peer.block_height (FORK_2_7),
+            BLOCK_2_7_1_bytes=peer.block2_height(FORK_2_7_1),
+            BLOCK_2_7_1_json= peer.block_height (FORK_2_7_1),
         )
         with open('_block_testdata.py', 'wt') as fh:
             for name, val in blocks.items():
