@@ -9,7 +9,10 @@ from ar.utils import (
 from ar.utils.deep_hash import deep_hash
 from .chunk import Chunk
 from .transaction import Transaction
-from . import FORK_1_8, FORK_1_9, FORK_2_0, FORK_2_2, FORK_2_3, FORK_2_4, FORK_2_5, FORK_2_6, FORK_2_6_8, FORK_2_7, FORK_2_7_1, FORK_2_8
+from . import (
+    FORK_1_6, FORK_1_8,
+    FORK_2_4, FORK_2_5, FORK_2_6, FORK_2_7, FORK_2_8
+)
 from . import INITIAL_VDF_DIFFICULTY
 
 # STATUS
@@ -349,7 +352,7 @@ class Block(AutoRaw):
         self.tx_root = b64enc_if_not_str(tx_root)
         self.hash_list_merkle = b64enc_if_not_str(hash_list_merkle)
         self.wallet_list = b64enc_if_not_str(wallet_list)
-        self.reward_addr = b64enc_if_not_str(reward_addr)
+        self.reward_addr = b64enc_if_not_str(reward_addr or 'unclaimed')
         self.tags = tags
         self.reward_pool = reward_pool
         self.weave_size = weave_size
@@ -506,6 +509,11 @@ class Block(AutoRaw):
         # remove internal fields
         kwparams.pop('tx_tree', None)
 
+        # add default fields, considering moving these to class constructor
+        # where the other default fields are
+        kwparams.setdefault('hash_list_merkle', b'')
+        kwparams.setdefault('cumulative_diff', 0)
+
         return cls(**kwparams)
 
     @classmethod
@@ -650,24 +658,75 @@ class Block(AutoRaw):
             'previous_block': self.previous_block,
             'timestamp': self.timestamp,
             'last_retarget': self.last_retarget,
-            'diff': str(self.diff),
-            'height': self.height,
-            'hash': self.hash,
-            'indep_hash': self.indep_hash,
-            'txs': [tx.id if type(tx) is Transaction else tx for tx in self.txs],
-            'tx_root': self.tx_root,
         })
+
+        # this verbosity does the following:
+        # 1. adds tx_tree before 1.8
+        # 2. hides cumulative_diff and hash_list_merkle prior to 1.6
+        # 3. controls str vs int type of fields depending on height
+        # conditioning the individual fields would be less verbose,
+        #  and only a microhair slower
         if self.height >= FORK_2_4:
             json.update({
+                'diff': str(self.diff),
+                'height': self.height,
+                'hash': self.hash,
+                'indep_hash': self.indep_hash,
+                'txs': [tx.id if type(tx) is Transaction else tx for tx in self.txs],
+                'tx_root': self.tx_root,
                 'wallet_list': self.wallet_list,
                 'reward_addr': self.reward_addr,
                 'tags': self.tags,
                 'reward_pool': str(self.reward_pool),
                 'weave_size': str(self.weave_size),
                 'block_size': str(self.block_size),
+                'cumulative_diff': str(self.cumulative_diff),
+                'hash_list_merkle': self.hash_list_merkle,
+            })
+        elif self.height >= FORK_1_8:
+            json.update({
+                'diff': str(self.diff),
+                'height': self.height,
+                'hash': self.hash,
+                'indep_hash': self.indep_hash,
+                'txs': [tx.id if type(tx) is Transaction else tx for tx in self.txs],
+                'tx_root': self.tx_root,
+                'tx_tree': [],
+                'wallet_list': self.wallet_list,
+                'reward_addr': self.reward_addr,
+                'tags': self.tags,
+                'reward_pool': self.reward_pool,
+                'weave_size': self.weave_size,
+                'block_size': self.block_size,
+                'cumulative_diff': str(self.cumulative_diff),
+                'hash_list_merkle': self.hash_list_merkle,
+            })
+        elif self.height >= FORK_1_6:
+            json.update({
+                'diff': self.diff,
+                'height': self.height,
+                'hash': self.hash,
+                'indep_hash': self.indep_hash,
+                'txs': [tx.id if type(tx) is Transaction else tx for tx in self.txs],
+                'tx_root': self.tx_root,
+                'tx_tree': [],
+                'wallet_list': self.wallet_list,
+                'reward_addr': self.reward_addr,
+                'tags': self.tags,
+                'reward_pool': self.reward_pool,
+                'weave_size': self.weave_size,
+                'block_size': self.block_size,
+                'cumulative_diff': self.cumulative_diff,
+                'hash_list_merkle': self.hash_list_merkle,
             })
         else:
             json.update({
+                'diff': self.diff,
+                'height': self.height,
+                'hash': self.hash,
+                'indep_hash': self.indep_hash,
+                'txs': [tx.id if type(tx) is Transaction else tx for tx in self.txs],
+                'tx_root': self.tx_root,
                 'tx_tree': [],
                 'wallet_list': self.wallet_list,
                 'reward_addr': self.reward_addr,
@@ -677,8 +736,6 @@ class Block(AutoRaw):
                 'block_size': self.block_size,
             })
         json.update({
-            'cumulative_diff': str(self.cumulative_diff),
-            'hash_list_merkle': self.hash_list_merkle,
             'poa': {
                 'option': str(self.poa.option),
                 'tx_path': self.poa.tx_path,
@@ -813,10 +870,24 @@ class Block(AutoRaw):
 if __name__ == '__main__':
     def store_block_testdata():
         from .peer import Peer
+        from . import (
+            FORK_1_6, FORK_1_7, FORK_1_8, FORK_1_9,
+            FORK_2_0, FORK_2_2, FORK_2_3,
+            FORK_2_4, FORK_2_5,
+            FORK_2_6, FORK_2_6_8,
+            FORK_2_7, FORK_2_7_1, FORK_2_7_2,
+            FORK_2_8,
+        )
         peer = Peer()
         blocks = dict(
             BLOCK_GEN_bytes = peer.block2_height(0),
             BLOCK_GEN_json  = peer.block_height (0),
+            BLOCK_HT1_bytes = peer.block2_height(1),
+            BLOCK_HT1_json  = peer.block_height (1),
+            BLOCK_1_6_bytes = peer.block2_height(FORK_1_6),
+            BLOCK_1_6_json  = peer.block_height (FORK_1_6),
+            BLOCK_1_7_bytes = peer.block2_height(FORK_1_7),
+            BLOCK_1_7_json  = peer.block_height (FORK_1_7),
             BLOCK_1_8_bytes = peer.block2_height(FORK_1_8),
             BLOCK_1_8_json  = peer.block_height (FORK_1_8),
             BLOCK_1_9_bytes = peer.block2_height(FORK_1_9),
@@ -839,11 +910,14 @@ if __name__ == '__main__':
             BLOCK_2_7_json  = peer.block_height (FORK_2_7),
             BLOCK_2_7_1_bytes=peer.block2_height(FORK_2_7_1),
             BLOCK_2_7_1_json= peer.block_height (FORK_2_7_1),
+            BLOCK_2_7_2_bytes=peer.block2_height(FORK_2_7_2),
+            BLOCK_2_7_2_json= peer.block_height (FORK_2_7_2),
         )
         with open('_block_testdata.py', 'wt') as fh:
             for name, val in blocks.items():
                 print(f'{name} = {repr(val)}', file=fh)
         return blocks
+    #store_block_testdata()
     from ._block_testdata import *
 
     def dict_cmp(a,b,ctx=''):
@@ -874,6 +948,14 @@ if __name__ == '__main__':
                     return False
         else:
             return True
+    #assert dict_cmp(Block.frombytes(BLOCK_GEN_bytes).tojson(), BLOCK_GEN_json)
+    #assert bin_cmp(Block.fromjson(  BLOCK_GEN_json).tobytes(), BLOCK_GEN_bytes)
+    assert dict_cmp(Block.frombytes(BLOCK_HT1_bytes).tojson(), BLOCK_HT1_json)
+    assert bin_cmp(Block.fromjson(  BLOCK_HT1_json).tobytes(), BLOCK_HT1_bytes)
+    assert dict_cmp(Block.frombytes(BLOCK_1_6_bytes).tojson(), BLOCK_1_6_json)
+    assert bin_cmp(Block.fromjson(  BLOCK_1_6_json).tobytes(), BLOCK_1_6_bytes)
+    assert dict_cmp(Block.frombytes(BLOCK_1_7_bytes).tojson(), BLOCK_1_7_json)
+    assert bin_cmp(Block.fromjson(  BLOCK_1_7_json).tobytes(), BLOCK_1_7_bytes)
     assert dict_cmp(Block.frombytes(BLOCK_1_8_bytes).tojson(), BLOCK_1_8_json)
     assert bin_cmp(Block.fromjson(  BLOCK_1_8_json).tobytes(), BLOCK_1_8_bytes)
     assert dict_cmp(Block.frombytes(BLOCK_1_9_bytes).tojson(), BLOCK_1_9_json)
