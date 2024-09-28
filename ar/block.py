@@ -18,7 +18,7 @@ from . import INITIAL_VDF_DIFFICULTY
 # gen       started     [ ]         [ ]         [ ]         unstarted   unstarted
 # 1.8       started     [ ]         [ ]         [ ]         unstarted   unstarted
 # 2.0       started     [ ]         [ ]         [ ]         unstarted   unstarted
-# 2.4       drafted     [ ]         [ ]         [ ]         unstarted   unstarted
+# 2.4       [X]         [X]         [X]         [X]         unstarted   unstarted
 # 2.5       [X]         [X]         [X]         [X]         notes       unstarted
 # 2.6       drafted     [ ]         [ ]         [ ]         unstarted   unstarted
 # 2.6.8     drafted     [ ]         [ ]         [ ]         unstarted   unstarted
@@ -307,9 +307,11 @@ class Block(AutoRaw):
         wallet_list, reward_addr, tags, reward_pool,
         weave_size, block_size, cumulative_diff,
         # size_tagged_txs,
-        poa, usd_to_ar_rate, scheduled_usd_to_ar_rate,
-        packing_2_5_threshold,
-        strict_data_split_threshold, # account_tree,
+        poa,
+        # 2.5
+        usd_to_ar_rate = [0,0], scheduled_usd_to_ar_rate = [0,0],
+        packing_2_5_threshold = 0,
+        strict_data_split_threshold = 0, # account_tree,
         # 2.6
         hash_preimage = '', recall_byte = None, reward = 0,
         previous_solution_hash = '', partition_number = None,
@@ -355,19 +357,8 @@ class Block(AutoRaw):
         self.cumulative_diff = cumulative_diff
         self.poa = poa
 
-        if not isinstance(usd_to_ar_rate, (tuple, list)):
-            usd_to_ar_rate = fractions.Fraction(usd_to_ar_rate)
-            self.usd_to_ar_rate_raw = [usd_to_ar_rate.numerator, usd_to_ar_rate.denominator]
-        else:
-            self.usd_to_ar_rate_raw = usd_to_ar_rate
-        if not isinstance(scheduled_usd_to_ar_rate, (tuple, list)):
-            scheduled_usd_to_ar_rate = fractions.Fraction(scheduled_usd_to_ar_rate)
-            self.scheduled_usd_to_ar_rate_raw = [
-                scheduled_usd_to_ar_rate.numerator, scheduled_usd_to_ar_rate.denominator
-            ]
-        else:
-            self.scheduled_usd_to_ar_rate_raw = scheduled_usd_to_ar_rate
-
+        self.usd_to_ar_rate = usd_to_ar_rate
+        self.scheduled_usd_to_ar_rate = scheduled_usd_to_ar_rate
         self.packing_2_5_threshold = packing_2_5_threshold
         self.strict_data_split_threshold = strict_data_split_threshold
 
@@ -470,20 +461,6 @@ class Block(AutoRaw):
                 self.previous_cumulative_diff2, self.preimage2,
             ])
 
-    @property
-    def usd_to_ar_rate(self):
-        try:
-            return fractions.Fraction(*self.usd_to_ar_rate_raw)
-        except ZeroDivisionError:
-            return None
-
-    @property
-    def scheduled_usd_to_ar_rate(self):
-        try:
-            return fractions.Fraction(*self.sceduled_usd_to_ar_rate_raw)
-        except ZeroDivisionError:
-            return None
-
     @classmethod
     def fromjson(cls, data):
         kwparams = {**data}
@@ -492,6 +469,7 @@ class Block(AutoRaw):
         for param in ['poa', 'poa2']:
             poakwparams = kwparams.get(param)
             if poakwparams is not None:
+                poakwparams = {**poakwparams}
                 for param2 in ['option']:
                     poakwparams[param2] = int(poakwparams[param2])
                 kwparams[param] = cls.POA(**poakwparams)
@@ -656,11 +634,15 @@ class Block(AutoRaw):
         return blk
 
     def tojson(self):
-        return {
-            'usd_to_ar_rate': [str(value) for value in self.usd_to_ar_rate_raw],
-            'scheduled_usd_to_ar_rate': [str(value) for value in self.scheduled_usd_to_ar_rate_raw],
+        json = {}
+        if self.height >= FORK_2_5:
+            json.update({
+            'usd_to_ar_rate': [str(value) for value in self.usd_to_ar_rate],
+            'scheduled_usd_to_ar_rate': [str(value) for value in self.scheduled_usd_to_ar_rate],
             'packing_2_5_threshold': str(self.packing_2_5_threshold),
             'strict_data_split_threshold': str(self.strict_data_split_threshold),
+            })
+        json.update({
             'nonce': self.nonce,
             'previous_block': self.previous_block,
             'timestamp': self.timestamp,
@@ -680,12 +662,13 @@ class Block(AutoRaw):
             'cumulative_diff': str(self.cumulative_diff),
             'hash_list_merkle': self.hash_list_merkle,
             'poa': {
-                'option': self.poa.option,
+                'option': str(self.poa.option),
                 'tx_path': self.poa.tx_path,
                 'data_path': self.poa.data_path,
                 'chunk': self.poa.chunk,
             }
-        }
+        })
+        return json
 
     def tobytes(self):
         stream = io.BytesIO()
@@ -707,10 +690,10 @@ class Block(AutoRaw):
         stream.write(arintenc(self.reward_pool,                     8))
         stream.write(arintenc(self.packing_2_5_threshold,           8))
         stream.write(arintenc(self.strict_data_split_threshold,     8))
-        stream.write(arintenc(self.usd_to_ar_rate_raw[0],           8))
-        stream.write(arintenc(self.usd_to_ar_rate_raw[1],           8))
-        stream.write(arintenc(self.scheduled_usd_to_ar_rate_raw[0], 8))
-        stream.write(arintenc(self.scheduled_usd_to_ar_rate_raw[1], 8))
+        stream.write(arintenc(self.usd_to_ar_rate[0],               8))
+        stream.write(arintenc(self.usd_to_ar_rate[1],               8))
+        stream.write(arintenc(self.scheduled_usd_to_ar_rate[0],     8))
+        stream.write(arintenc(self.scheduled_usd_to_ar_rate[1],     8))
         stream.write(arintenc(self.poa.option,                      8))
         stream.write(arbinenc(self.poa.chunk_raw,                  24))
         stream.write(arbinenc(self.poa.tx_path_raw,                24))
@@ -837,5 +820,33 @@ if __name__ == '__main__':
         return blocks
     from ._block_testdata import *
 
-    assert Block.fromjson(BLOCK_2_5_json).tobytes() == BLOCK_2_5_bytes
-    assert Block.frombytes(BLOCK_2_5_bytes).tojson() == BLOCK_2_5_json
+    def dict_cmp(a,b,ctx=''):
+        if a != b:
+            for k, v in a.items():
+                if v != b[k]:
+                    subctx = ctx+f'["{k}"]'
+                    if type(v) is dict:
+                        return dict_cmp(v, b[k], ctx=subctx)
+                    else:
+                        print(subctx, repr(v), '!=', repr(b[k]))
+            return False
+        else:
+            return True
+    def bin_cmp(a, b):
+        if a != b:
+            import binascii
+            for idx in range(max(len(a),len(b))):
+                if idx >= len(a) or idx >= len(b) or a[idx] != b[idx]:
+                    for line in range(idx, max(len(a),len(b)), 16):
+                        chunk_a = a[line:line+16]
+                        chunk_b = b[line:line+16]
+                        print(line, binascii.hexlify(chunk_a, ' ').decode(), '!=', binascii.hexlify(chunk_b, ' ').decode())
+                        if line > idx + 1024:
+                            break
+                    return False
+        else:
+            return True
+    assert dict_cmp(Block.frombytes(BLOCK_2_4_bytes).tojson(), BLOCK_2_4_json)
+    assert bin_cmp(Block.fromjson(BLOCK_2_4_json).tobytes(), BLOCK_2_4_bytes)
+    assert dict_cmp(Block.frombytes(BLOCK_2_5_bytes).tojson(), BLOCK_2_5_json)
+    assert bin_cmp(Block.fromjson(BLOCK_2_5_json).tobytes(), BLOCK_2_5_bytes)

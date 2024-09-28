@@ -67,7 +67,10 @@ def arbindec(stream, bits):
 
 def arintenc(integer, bits):
     if integer < 256:
-        return bytes((1,integer))
+        if integer == 0:
+            return bytes([0])
+        else:
+            return bytes([1,integer])
     else:
         integer = int(integer)
         size_bits = integer.bit_length()
