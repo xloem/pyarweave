@@ -1,15 +1,24 @@
 import fractions
 import io
 from ar.utils import (
-    arbinenc, arintenc, arbindec, arintdec, b64enc_if_not_str, b64enc, b64dec
+    erlintenc, arbinenc, arintenc,
+    erlintdec, arbindec, arintdec,
+    b64enc_if_not_str, b64enc, b64dec
 )
 from ar.utils.deep_hash import deep_hash
 from .chunk import Chunk
 from .transaction import Transaction
-from . import FORK_2_4
+from . import FORK_2_4, FORK_2_5, FORK_2_6, FORK_2_7, FORK_2_8
 
-# note: there are actually three different block formats in chain history,
-# according to https://docs.arweave.org/developers/server/http-api#block-format
+# STATUS
+# MINING IS NOT PLANNED AT THIS TIME
+# FORK      FROMBYTES   TOBYTES     FROMJSON    TOJSON      VALIDATION  MINING
+# gen       started     [ ]         [ ]         [ ]         unstarted   unstarted
+# 2.4       started     [ ]         [ ]         [ ]         unstarted   unstarted
+# 2.5       [X]         [X]         [X]         [X]         notes       unstarted
+# 2.6       started     [ ]         [ ]         [ ]         unstarted   unstarted
+# 2.7       started     [ ]         [ ]         [ ]         unstarted   unstarted
+# 2.8       started     [ ]         [ ]         [ ]         unstarted   unstarted
 
 class Block:
     def __init__(self, indep_hash, prev_block, timestamp, nonce,
@@ -116,7 +125,9 @@ class Block:
     @classmethod
     def frombytes(cls, bytes):
         stream = io.BytesIO(bytes)
-        return cls.fromstream(stream)
+        block = cls.fromstream(stream)
+        assert stream.tell() == len(bytes)
+        return block
             
     @classmethod
     def fromstream(cls, stream):
@@ -138,21 +149,81 @@ class Block:
         reward_pool                  = arintdec(stream,  8)
         packing_2_5_threshold        = arintdec(stream,  8)
         strict_data_split_threshold  = arintdec(stream,  8)
-        usd_to_ar_rate_raw           =(arintdec(stream,  8),
-                                       arintdec(stream,  8))
-        scheduled_usd_to_ar_rate_raw =(arintdec(stream,  8),
-                                       arintdec(stream,  8))
+        usd_to_ar_rate_raw           =[arintdec(stream,  8),
+                                       arintdec(stream,  8)]
+        scheduled_usd_to_ar_rate_raw =[arintdec(stream,  8),
+                                       arintdec(stream,  8)]
         poa_option                   = arintdec(stream,  8)
         poa_chunk_raw                = arbindec(stream, 24)
         poa_tx_path_raw              = arbindec(stream, 24)
         poa_data_path_raw            = arbindec(stream, 24)
 
-        tags_count = int.from_bytes(stream.read(2), 'big')
+        tags_count = erlintdec(stream, 16)
         tags       = [arbindec(stream, 16) for idx in range(tags_count)]
 
         # either 32-byte txids or complete txs
-        txs_count = int.from_bytes(stream.read(2), 'big')
+        txs_count = erlintdec(stream, 16)
         txs = [Transaction.fromstream(stream) for idx in range(txs_count)][::-1]
+
+        if height >= FORK_2_6:
+            hash_preimage  = arbindec(stream, 8)
+            recall_byte    = arintdec(stream, 16)
+            reward         = arintdec(stream, 8)
+            sig            = arbindec(stream, 16)
+            recall_byte_2  = arintdec(stream, 16)
+            prev_soln_hash = arbindec(stream, 8)
+            part_no        = erlintdec(stream, 256)
+            nonce_limiter_output           = stream.read(32)
+            nonce_limiter_global_step_no   = erlintdec(stream, 64)
+            nonce_limiter_seed             = stream.read(48)
+            nonce_limiter_next_seed        = stream.read(48)
+            nonce_limiter_prev_output      = arbindec(stream, 8)
+            nonce_limiter_part_ubound      = erlintdec(stream, 256)
+            nonce_limiter_next_part_ubound = erlintdec(stream, 256)
+            nonce_limiter_last_step_chkpts_ct   = erlintdec(stream, 16)
+            nonce_limiter_last_step_chkpts      = [stream.read(32) for idx in range(nonce_limiter_last_step_chkpts_ct)][::-1]
+            nonce_limiter_steps_ct              = erlintdec(stream, 16)
+            nonce_limiter_steps                 = [stream.read(32) for idx in range(nonce_limiter_steps_ct)][::-1]
+            poa2_chunk           = arbindec(stream, 24)
+            reward_key           = arbindec(stream, 16)
+            poa2_tx_path         = arbindec(stream, 24)
+            poa2_data_path       = arbindec(stream, 24)
+            price_per_gib_min    = arintdec(stream, 8)
+            sched_price_per_gib_min = arintdec(stream, 8)
+            reward_history_hash  = stream.read(32)
+            debt_supply          = arintdec(stream, 8)
+            kryder_plus_rate_mul = erlintdec(stream, 24)
+            kryder_plus_rate_mul_latch = erlintdec(stream, 8)
+            denom                = erlintdec(stream, 24)
+            redenom_height       = arintdec(stream, 8)
+            prev_cumulative_diff = arintdec(stream, 16)
+            double_signing_proof_flag = erlintdec(stream, 8)
+            assert double_signing_proof_flag & 1 == double_signing_proof_flag
+            if double_Signing_proof_flag:
+                double_signing_proof_key        = stream.read(512)
+                double_signing_proof_sig1       = stream.read(512)
+                double_signing_proof_cdiff1     = arintdec(stream, 16)
+                double_signing_proof_prevcdiff1 = arintdec(stream, 16)
+                double_signing_proof_preimage1  = stream.read(64)
+                double_signing_proof_sig2       = stream.read(512)
+                double_signing_proof_cdiff2     = arintdec(stream, 16)
+                double_signing_proof_prevcdiff2 = arintdec(stream, 16)
+                double_signing_proof_preimage2  = stream.read(64)
+
+        if height >= FORK_2_7:
+            merk_rebase_supp_thresh = arintdec(stream, 16)
+            chunk_hash              = stream.read(32)
+            chunk2_hash             = arbindec(stream, 8)
+            block_time_hist_hash    = stream.read(32)
+            nonce_limiter_vdf_difficulty      = arintdec(stream, 8)
+            nonce_limiter_next_vdf_difficulty = arintdec(stream, 8)
+
+        if height >= FORK_2_8:
+            packing_difficulty   = erlintdec(stream, 8)
+            unpacked_chunk_hash  = arbindec(stream, 8)
+            unpacked_chunk2_hash = arbindec(stream, 8)
+            poa_unpacked_chunk   = arbindec(stream, 24)
+            poa2_unpacked_chunk  = arbindec(stream, 24)
 
         return cls(indep_hash = indep_hash_raw, prev_block = prev_block_raw,
                    timestamp = timestamp, nonce = nonce_raw, height = height,
@@ -325,3 +396,28 @@ class Block:
         if self.height >= FORK_2_5:
             return 
 
+
+if __name__ == '__main__':
+    def store_block_testdata():
+        from .peer import Peer
+        peer = Peer()
+        blocks = dict(
+            BLOCK_GEN_bytes = peer.block2_height(0),
+            BLOCK_GEN_json  = peer.block_height (0),
+            BLOCK_2_4_bytes = peer.block2_height(FORK_2_4),
+            BLOCK_2_4_json  = peer.block_height (FORK_2_4),
+            BLOCK_2_5_bytes = peer.block2_height(FORK_2_5),
+            BLOCK_2_5_json  = peer.block_height (FORK_2_5),
+            BLOCK_2_6_bytes = peer.block2_height(FORK_2_6),
+            BLOCK_2_6_json  = peer.block_height (FORK_2_6),
+            BLOCK_2_7_bytes = peer.block2_height(FORK_2_7),
+            BLOCK_2_7_json  = peer.block_height (FORK_2_7),
+        )
+        with open('_block_testdata.py', 'wt') as fh:
+            for name, val in blocks.items():
+                print(f'{name} = {repr(val)}', file=fh)
+        return blocks
+    from ._block_testdata import *
+
+    assert Block.fromjson(BLOCK_2_5_json).tobytes() == BLOCK_2_5_bytes
+    assert Block.frombytes(BLOCK_2_5_bytes).tojson() == BLOCK_2_5_json

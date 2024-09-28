@@ -39,6 +39,17 @@ def utf8dec_if_bytes(data):
     else:
         return data
 
+def erlintenc(integer, bits):
+    integer = int(integer)
+    return integer.to_bytes(bits // 8, 'big')
+
+def erlintdec(stream, bits):
+    int_size = bits // 8
+    int_raw = stream.read(int_size)
+    if len(int_raw) != int_size:
+        raise ArweaveException('stream terminated early')
+    return int.from_bytes(int_raw, 'big')
+
 def arbinenc(data, bits):
     size_raw = len(data).to_bytes(bits // 8, 'big')
     return size_raw + data
