@@ -12,7 +12,8 @@ from .chunk import Chunk
 from .transaction import Transaction
 from . import (
     FORK_1_6, FORK_1_8,
-    FORK_2_4, FORK_2_5, FORK_2_6, FORK_2_7, FORK_2_8
+    FORK_2_0, FORK_2_4, FORK_2_5,
+    FORK_2_6, FORK_2_7, FORK_2_8
 )
 from . import INITIAL_VDF_DIFFICULTY
 
@@ -945,11 +946,25 @@ class Block(AutoRaw):
                 # ar_mine_randomx: hash_fast, hash_light, init_light;hash_light
     #   ar_mine:validate(POW, ar_poa:modify_diff(Diff, POA#poa.option, Height), Height)
 
-    #def compute_indep_hash(self): # from ar_http_iface_middleware.erl
-    #    bds = self._get_data_segment()
-    #    return bds, ar_weave:indep_hash(BDS, self.hash_row, self.nonce_raw, self.poa)
-
     # from ar_block.erl
+    def compute_indep_hash_raw(self):
+        assert self.height < FORK_2_6 
+        if self.height >= FORK_2_4:
+            return deep_hash([
+                self._get_data_segment(),
+                self.hash_raw, self.nonce_raw,
+                [
+                    str(self.poa.option).encode(),
+                    self.poa.tx_path_raw,
+                    self.poa.data_path_raw,
+                    self.poa.chunk_raw,
+                ],
+            ])
+        else:
+            return deep_hash([
+                self._get_data_segment(),
+                self.hash_raw, self.nonce_raw,
+            ])
     def _get_data_segment(self):
         bds_base = self._get_data_segment_base()
         block_index_merkle = self.hash_list_merkle_raw
@@ -971,7 +986,7 @@ class Block(AutoRaw):
                 self.tx_root_raw,
                 [
                     b64dec(tx.id if type(tx) is Transaction else tx)
-                    for tx in self.tx
+                    for tx in self.txs
                 ],
                 str(self.block_size).encode(),
                 str(self.weave_size).encode(),
@@ -984,31 +999,35 @@ class Block(AutoRaw):
                     str(self.usd_to_ar_rate[1]).encode(),
                     str(self.scheduled_usd_to_ar_rate[0]).encode(),
                     str(self.scheduled_usd_to_ar_rate[1]).encode(),
-                    str(self.packing_threshold).encode(),
-                    str(self.strict_data_split_threshold),
+                    str(self.packing_2_5_threshold).encode(),
+                    str(self.strict_data_split_threshold).encode(),
                     *props
                 ]
             else:
                 props2 = props
             return deep_hash(props2)
         else:
+            tx_list = [
+                    b64dec(tx.id if type(tx) is Transaction else tx)
+                    for tx in self.txs
+            ]
+            assert self.height >= FORK_2_0 # how is tx_root computed before 2.0
+            if self.height < FORK_2_0:
+                tx_list.sort()
             return deep_hash([
                 str(self.height).encode(),
                 self.previous_block_raw,
                 self.tx_root_raw,
-                [
-                    b64dec(tx.id if type(tx) is Transaction else tx)
-                    for tx in self.tx
-                ],
+                tx_list,
                 str(self.block_size).encode(),
                 str(self.weave_size).encode(),
                 self.reward_addr_raw,
                 [[tag['name'].encode(), tag['value'].encode()] for tag in self.tags],
                 [
                     str(self.poa.option).encode(),
-                    self.poa.tx_path,
-                    self.poa.data_path,
-                    self.poa.chunk,
+                    self.poa.tx_path_raw,
+                    self.poa.data_path_raw,
+                    self.poa.chunk_raw,
                 ]
             ])
     def _encode_tags(self):
@@ -1029,6 +1048,11 @@ if __name__ == '__main__':
         )
         peer = Peer()
         blocks = dict(
+            HASH_LIST_1_0   = peer.session.get(
+                'https://github.com/ArweaveTeam/arweave/raw/' +
+                '60de0fc5d7fb8c1f5880d9dc17266d85db897aea' +
+                '/data/hash_list_1_0'
+            ).json(),
             BLOCK_GEN_bytes = peer.block2_height(0),
             BLOCK_GEN_json  = peer.block_height (0),
             BLOCK_HT1_bytes = peer.block2_height(1),
@@ -1114,20 +1138,34 @@ if __name__ == '__main__':
     assert bin_cmp(Block.fromjson(  BLOCK_1_8_json).tobytes(),   BLOCK_1_8_bytes)
     assert dict_cmp(Block.frombytes(BLOCK_1_9_bytes).tojson(),   BLOCK_1_9_json)
     assert bin_cmp(Block.fromjson(  BLOCK_1_9_json).tobytes(),   BLOCK_1_9_bytes)
-    assert dict_cmp(Block.frombytes(BLOCK_2_0_bytes).tojson(),   BLOCK_2_0_json)
+    block_2_0_bytes = Block.frombytes(BLOCK_2_0_bytes)
+    assert dict_cmp(block_2_0_bytes.tojson(),                    BLOCK_2_0_json)
     assert bin_cmp(Block.fromjson(  BLOCK_2_0_json).tobytes(),   BLOCK_2_0_bytes)
-    assert dict_cmp(Block.frombytes(BLOCK_2_2_bytes).tojson(),   BLOCK_2_2_json)
+    assert block_2_0_bytes.compute_indep_hash_raw() == block_2_0_bytes.indep_hash_raw
+    block_2_2_bytes = Block.frombytes(BLOCK_2_2_bytes)
+    assert dict_cmp(block_2_2_bytes.tojson(),                    BLOCK_2_2_json)
     assert bin_cmp(Block.fromjson(  BLOCK_2_2_json).tobytes(),   BLOCK_2_2_bytes)
-    assert dict_cmp(Block.frombytes(BLOCK_2_3_bytes).tojson(),   BLOCK_2_3_json)
+    assert block_2_2_bytes.compute_indep_hash_raw() == block_2_2_bytes.indep_hash_raw
+    block_2_3_bytes = Block.frombytes(BLOCK_2_3_bytes)
+    assert dict_cmp(block_2_3_bytes.tojson(),                    BLOCK_2_3_json)
     assert bin_cmp(Block.fromjson(  BLOCK_2_3_json).tobytes(),   BLOCK_2_3_bytes)
-    assert dict_cmp(Block.frombytes(BLOCK_2_4_bytes).tojson(),   BLOCK_2_4_json)
+    assert block_2_3_bytes.compute_indep_hash_raw() == block_2_3_bytes.indep_hash_raw
+    block_2_4_bytes = Block.frombytes(BLOCK_2_4_bytes)
+    assert dict_cmp(block_2_4_bytes.tojson(),                    BLOCK_2_4_json)
     assert bin_cmp(Block.fromjson(  BLOCK_2_4_json).tobytes(),   BLOCK_2_4_bytes)
-    assert dict_cmp(Block.frombytes(BLOCK_2_5_bytes).tojson(),   BLOCK_2_5_json)
+    assert block_2_4_bytes.compute_indep_hash_raw() == block_2_4_bytes.indep_hash_raw
+    block_2_5_bytes = Block.frombytes(BLOCK_2_5_bytes)
+    assert dict_cmp(block_2_5_bytes.tojson(),                    BLOCK_2_5_json)
     assert bin_cmp(Block.fromjson(  BLOCK_2_5_json).tobytes(),   BLOCK_2_5_bytes)
-    assert dict_cmp(Block.frombytes(BLOCK_2_6_bytes).tojson(),   BLOCK_2_6_json)
+    assert block_2_5_bytes.compute_indep_hash_raw() == block_2_5_bytes.indep_hash_raw
+    block_2_6_bytes = Block.frombytes(BLOCK_2_6_bytes)
+    assert dict_cmp(block_2_6_bytes.tojson(),                    BLOCK_2_6_json)
     assert bin_cmp(Block.fromjson(  BLOCK_2_6_json).tobytes(),   BLOCK_2_6_bytes)
-    assert dict_cmp(Block.frombytes(BLOCK_2_6_8_bytes).tojson(), BLOCK_2_6_8_json)
+    #assert block_2_6_bytes.compute_indep_hash_raw() == block_2_6_bytes.indep_hash_raw
+    block_2_6_8_bytes = Block.frombytes(BLOCK_2_6_8_bytes)
+    assert dict_cmp(block_2_6_8_bytes.tojson(),                  BLOCK_2_6_8_json)
     assert bin_cmp(Block.fromjson(  BLOCK_2_6_8_json).tobytes(), BLOCK_2_6_8_bytes)
+    #assert block_2_6_8_bytes.compute_indep_hash_raw() == block_2_6_8_bytes.indep_hash_raw
     assert dict_cmp(Block.frombytes(BLOCK_2_7_bytes).tojson(),   BLOCK_2_7_json)
     assert bin_cmp(Block.fromjson(  BLOCK_2_7_json).tobytes(),   BLOCK_2_7_bytes)
     assert dict_cmp(Block.frombytes(BLOCK_2_7_1_bytes).tojson(), BLOCK_2_7_1_json)
