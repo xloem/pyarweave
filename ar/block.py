@@ -16,19 +16,20 @@ from . import (
     FORK_2_6, FORK_2_7, FORK_2_8
 )
 from . import INITIAL_VDF_DIFFICULTY
+from Crypto.Hash import SHA256, SHA384
 
 # STATUS
 # MINING IS NOT PLANNED AT THIS TIME
-# FORK      FROMBYTES   TOBYTES     FROMJSON    TOJSON      VALIDATION  MINING
-# gen       [X]         [X]         [X]         [X]         unstarted   unstarted
-# 1.8       [X]         [X]         [X]         [X]         unstarted   unstarted
-# 2.0       [X]         [X]         [X]         [X]         unstarted   unstarted
-# 2.4       [X]         [X]         [X]         [X]         unstarted   unstarted
-# 2.5       [X]         [X]         [X]         [X]         notes       unstarted
-# 2.6       [X]         [X]         [X]         [X]         unstarted   unstarted
-# 2.7       [X]         [X]         [X]         [X]         unstarted   unstarted
-# 2.7.2     [X]         [X]         [X]         [X]         unstarted   unstarted
-# 2.8       drafted     drafted     [ ]         [ ]         unstarted   unstarted
+# FORK      FROMBYTES   TOBYTES     FROMJSON    TOJSON      HASHING     VALIDATION  MINING
+# gen       [X]         [X]         [X]         [X]         unstarted   unstarted   unstarted
+# 1.8       [X]         [X]         [X]         [X]         unstarted   unstarted   unstarted
+# 2.0       [X]         [X]         [X]         [X]         [X]         unstarted   unstarted
+# 2.4       [X]         [X]         [X]         [X]         [X]         unstarted
+# 2.5       [X]         [X]         [X]         [X]         [X]         notes       unstarted
+# 2.6       [X]         [X]         [X]         [X]         [X]         unstarted   unstarted
+# 2.7       [X]         [X]         [X]         [X]         [X]         unstarted   unstarted
+# 2.7.2     [X]         [X]         [X]         [X]         [X]         unstarted   unstarted
+# 2.8       drafted     drafted     [ ]         [ ]         drafted     unstarted   unstarted
 
 TIMESTAMP_FIELD_SIZE_LIMIT = 12
 
@@ -482,6 +483,24 @@ class Block(AutoRaw):
                 self.signature2, self.cumulative_diff2,
                 self.previous_cumulative_diff2, self.preimage2,
             ])
+        def tobytes(self):
+            stream = io.BytesIO()
+            if self is None:
+                stream.write(erlintenc(0,                        8))
+            else:
+                stream.write(erlintenc(1,                        8))
+                stream.write(self.key_raw)
+                stream.write(self.signature1_raw)
+                stream.write(arintenc(self.cumulative_diff1,    16))
+                stream.write(arintenc(self.previous_cumulative_diff1,
+                                                                16))
+                stream.write(self.preimage1_raw)
+                stream.write(self.signature2_raw)
+                stream.write(arintenc(self.cumulative_diff2,    16))
+                stream.write(arintenc(self.previous_cumulative_diff2,
+                                                                16))
+                stream.write(self.preimage2_raw)
+            return stream.getvalue()
 
     @property
     def reward_addr(self):
@@ -508,6 +527,10 @@ class Block(AutoRaw):
                 nlikwparams['next_partition_upper_bound'] = nlikwparams.pop('next_zone_upper_bound')
                 nlikwparams['steps'] = nlikwparams.pop('checkpoints')
                 kwparams[param] = cls.NonceLimiterInfo(**nlikwparams)
+        for param in ['double_signing_proof']:
+            dspkwparams = kwparams.get(param)
+            if not dspkwparams:
+                kwparams[param] = None
 
         # remove internal fields
         kwparams.pop('tx_tree', None)
@@ -896,23 +919,9 @@ class Block(AutoRaw):
             stream.write(erlintenc(self.denomination,              24))
             stream.write(arintenc(self.redenomination_height,       8))
             stream.write(arintenc(self.previous_cumulative_diff,   16))
-            stream.write(erlintenc(
-                1 if self.double_signing_proof else 0,              8))
-            if self.double_signing_proof:
-                stream.write(self.double_signing_proof.key_raw)
-                stream.write(self.double_signing_proof.signature1_raw)
-                stream.write(arintenc(
-                    self.double_signing_proof.cumulative_diff1,    16))
-                stream.write(arintenc(
-                    self.double_signing_proof.previous_cumulative_diff1,
-                                                                   16))
-                stream.write(self.double_signing_proof.preimage1_raw)
-                stream.write(self.double_signing_proof.signature2_raw)
-                stream.write(arintenc(
-                    self.double_signing_proof.cumulative_diff2,    16))
-                stream.write(arintenc(self.
-                    double_signing_proof.previous_cumulative_diff2,16))
-                stream.write(self.double_signing_proof.preimage2_raw)
+            stream.write(self.DoubleSigningProof.tobytes(
+                self.double_signing_proof
+            ))
 
         if self.height >= FORK_2_7:
             stream.write(arintenc(
@@ -948,8 +957,11 @@ class Block(AutoRaw):
 
     # from ar_block.erl
     def compute_indep_hash_raw(self):
-        assert self.height < FORK_2_6 
-        if self.height >= FORK_2_4:
+        if self.height >= FORK_2_6:
+            return SHA384.new(
+                self._get_signing_hash() + self.signature_raw
+            ).digest()
+        elif self.height >= FORK_2_4:
             return deep_hash([
                 self._get_data_segment(),
                 self.hash_raw, self.nonce_raw,
@@ -965,7 +977,87 @@ class Block(AutoRaw):
                 self._get_data_segment(),
                 self.hash_raw, self.nonce_raw,
             ])
+    def _get_signing_hash(self):
+        ''' post 2.6 '''
+        hash = SHA256.new(b''.join([
+	        arbinenc(self.previous_block_raw, 8),
+            arintenc(self.timestamp, 8),
+			arbinenc(self.nonce_raw, 16),
+            arintenc(self.height, 8),
+			arintenc(self.diff, 16),
+            arintenc(self.cumulative_diff, 16),
+			arintenc(self.last_retarget, 8),
+            arbinenc(self.hash_raw, 8),
+			arintenc(self.block_size, 16),
+            arintenc(self.weave_size, 16),
+			arbinenc(self.reward_addr_raw, 8),
+            arbinenc(self.tx_root_raw, 8),
+			arbinenc(self.wallet_list_raw, 8),
+			arbinenc(self.hash_list_merkle_raw, 8),
+            arintenc(self.reward_pool, 8),
+			arintenc(self.packing_2_5_threshold, 8),
+			arintenc(self.strict_data_split_threshold, 8),
+			arintenc(self.usd_to_ar_rate[0], 8),
+			arintenc(self.usd_to_ar_rate[1], 8),
+			arintenc(self.scheduled_usd_to_ar_rate[0], 8),
+			arintenc(self.scheduled_usd_to_ar_rate[1], 8),
+            erlintenc(len(self.tags), 16) + b''.join([
+                arbinenc(tag, 16) for tag in self.tags
+            ]),
+            erlintenc(len(self.txs), 16) + b''.join([
+                arbinenc(b64dec(tx), 8) for tx in self.txs[::-1]
+            ]),
+			arintenc(self.reward, 8),
+			arintenc(self.recall_byte, 16),
+            arbinenc(self.hash_preimage_raw, 8),
+			arintenc(self.recall_byte2, 16),
+            arbinenc(self.reward_key_raw, 16),
+			arintenc(self.partition_number, 8),
+            self.nonce_limiter_info.output_raw,
+            erlintenc(self.nonce_limiter_info.global_step_number, 64),
+			self.nonce_limiter_info.seed_raw,
+            self.nonce_limiter_info.next_seed_raw,
+            erlintenc(self.nonce_limiter_info.partition_upper_bound, 256),
+			erlintenc(self.nonce_limiter_info.next_partition_upper_bound, 256),
+            arbinenc(self.nonce_limiter_info.prev_output_raw, 8),
+			erlintenc(len(self.nonce_limiter_info.steps), 16),
+            b''.join(self.nonce_limiter_info.steps_raw),
+			erlintenc(len(self.nonce_limiter_info.last_step_checkpoints), 16),
+            b''.join(self.nonce_limiter_info.last_step_checkpoints_raw),
+			arbinenc(self.previous_solution_hash_raw, 8),
+			arintenc(self.price_per_gib_minute, 8),
+			arintenc(self.scheduled_price_per_gib_minute, 8),
+			self.reward_history_hash_raw,
+            arintenc(self.debt_supply, 8),
+			erlintenc(self.kryder_plus_rate_multiplier, 24),
+            erlintenc(self.kryder_plus_rate_multiplier_latch, 8),
+            erlintenc(self.denomination, 24),
+			arintenc(self.redenomination_height, 8),
+            self.DoubleSigningProof.tobytes(self.double_signing_proof),
+			arintenc(self.previous_cumulative_diff, 16),
+        ]))
+        if self.height >= FORK_2_7:
+            hash.update(b''.join([
+				arintenc(self.merkle_rebase_support_threshold, 16),
+                arbinenc(self.poa.data_path_raw, 24),
+				arbinenc(self.poa.tx_path_raw, 24),
+				arbinenc(self.poa2.data_path_raw, 24),
+				arbinenc(self.poa2.tx_path_raw, 24),
+                self.chunk_hash_raw,
+				arbinenc(self.chunk2_hash_raw, 8),
+                self.block_time_history_hash_raw,
+				arintenc(self.nonce_limiter_info.vdf_difficulty, 8),
+				arintenc(self.nonce_limiter_info.next_vdf_difficulty, 8),
+            ]))
+        if self.height >= FORK_2_8:
+            hash.update(b''.join([
+			    erlintenc(self.packing_difficulty, 8),
+                arbinenc(self.unpacked_chunk_hash, 8),
+                arbinenc(self.unpacked_chunk2_hash, 8)
+            ]))
+        return hash.digest()
     def _get_data_segment(self):
+        ''' pre 2.6 '''
         bds_base = self._get_data_segment_base()
         block_index_merkle = self.hash_list_merkle_raw
         return deep_hash([
@@ -1161,14 +1253,20 @@ if __name__ == '__main__':
     block_2_6_bytes = Block.frombytes(BLOCK_2_6_bytes)
     assert dict_cmp(block_2_6_bytes.tojson(),                    BLOCK_2_6_json)
     assert bin_cmp(Block.fromjson(  BLOCK_2_6_json).tobytes(),   BLOCK_2_6_bytes)
-    #assert block_2_6_bytes.compute_indep_hash_raw() == block_2_6_bytes.indep_hash_raw
+    assert block_2_6_bytes.compute_indep_hash_raw() == block_2_6_bytes.indep_hash_raw
     block_2_6_8_bytes = Block.frombytes(BLOCK_2_6_8_bytes)
     assert dict_cmp(block_2_6_8_bytes.tojson(),                  BLOCK_2_6_8_json)
     assert bin_cmp(Block.fromjson(  BLOCK_2_6_8_json).tobytes(), BLOCK_2_6_8_bytes)
-    #assert block_2_6_8_bytes.compute_indep_hash_raw() == block_2_6_8_bytes.indep_hash_raw
-    assert dict_cmp(Block.frombytes(BLOCK_2_7_bytes).tojson(),   BLOCK_2_7_json)
+    assert block_2_6_8_bytes.compute_indep_hash_raw() == block_2_6_8_bytes.indep_hash_raw
+    block_2_7_bytes = Block.frombytes(BLOCK_2_7_bytes)
+    assert dict_cmp(block_2_7_bytes.tojson(),                    BLOCK_2_7_json)
     assert bin_cmp(Block.fromjson(  BLOCK_2_7_json).tobytes(),   BLOCK_2_7_bytes)
-    assert dict_cmp(Block.frombytes(BLOCK_2_7_1_bytes).tojson(), BLOCK_2_7_1_json)
+    assert block_2_7_bytes.compute_indep_hash_raw() == block_2_7_bytes.indep_hash_raw
+    block_2_7_1_bytes = Block.frombytes(BLOCK_2_7_1_bytes)
+    assert dict_cmp(block_2_7_1_bytes.tojson(),                  BLOCK_2_7_1_json)
     assert bin_cmp(Block.fromjson(  BLOCK_2_7_1_json).tobytes(), BLOCK_2_7_1_bytes)
-    assert dict_cmp(Block.frombytes(BLOCK_2_7_2_bytes).tojson(), BLOCK_2_7_2_json)
+    assert block_2_7_1_bytes.compute_indep_hash_raw() == block_2_7_1_bytes.indep_hash_raw
+    block_2_7_2_bytes = Block.frombytes(BLOCK_2_7_2_bytes)
+    assert dict_cmp(block_2_7_2_bytes.tojson(),                  BLOCK_2_7_2_json)
     assert bin_cmp(Block.fromjson(  BLOCK_2_7_2_json).tobytes(), BLOCK_2_7_2_bytes)
+    assert block_2_7_2_bytes.compute_indep_hash_raw() == block_2_7_2_bytes.indep_hash_raw

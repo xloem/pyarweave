@@ -45,8 +45,11 @@ def int_if_not_none(val):
     else:
         return int(val)
 
-def erlintenc(integer, bits):
+def erlintenc(integer, bits=None):
     integer = int(integer)
+    if bits is None:
+        bits = integer.bit_length()
+        bits -= bits % -8 # round up to 8 bits
     return integer.to_bytes(bits // 8, 'big')
 
 def erlintdec(stream, bits):
