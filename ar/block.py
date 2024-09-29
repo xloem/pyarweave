@@ -25,8 +25,7 @@ from . import INITIAL_VDF_DIFFICULTY
 # 2.4       [X]         [X]         [X]         [X]         unstarted   unstarted
 # 2.5       [X]         [X]         [X]         [X]         notes       unstarted
 # 2.6       [X]         [X]         [X]         [X]         unstarted   unstarted
-# 2.6.8     drafted     drafted     [ ]         [ ]         unstarted   unstarted
-# 2.7       drafted     drafted     [ ]         [ ]         unstarted   unstarted
+# 2.7       [X]         [X]         [X]         [X]         unstarted   unstarted
 # 2.7.1     drafted     drafted     [ ]         [ ]         unstarted   unstarted
 # 2.8       drafted     drafted     [ ]         [ ]         unstarted   unstarted
 
@@ -407,9 +406,10 @@ class Block(AutoRaw):
 
         # 2.7
         
-        self.merkle_rebase_support_threshold = merkle_rebase_support_threshold
+        self.merkle_rebase_support_threshold = int_if_not_none(merkle_rebase_support_threshold)
         self.chunk_hash = b64enc_if_not_str(chunk_hash)
         self.chunk2_hash = b64enc_if_not_str(chunk2_hash)
+        self.block_time_history_hash = b64enc_if_not_str(block_time_history_hash)
         
         # 2.8
 
@@ -455,8 +455,8 @@ class Block(AutoRaw):
 
             # 2.7
 
-            self.vdf_difficulty = vdf_difficulty
-            self.next_vdf_difficulty = next_vdf_difficulty
+            self.vdf_difficulty = int_if_not_none(vdf_difficulty)
+            self.next_vdf_difficulty = int_if_not_none(next_vdf_difficulty)
     class DoubleSigningProof(list,AutoRaw):
         def __init__(
             self, key,
@@ -643,7 +643,25 @@ class Block(AutoRaw):
 
     def tojson(self):
         json = {}
+        if self.height >= FORK_2_7:
+            if self.chunk2_hash:
+                json.update({
+                    'merkle_rebase_support_threshold':
+                        str(self.merkle_rebase_support_threshold),
+                    'chunk_hash': self.chunk_hash,
+                    'chunk2_hash': self.chunk2_hash,
+                    'block_time_history_hash': self.block_time_history_hash,
+                })
+            else:
+                json.update({
+                    'merkle_rebase_support_threshold':
+                        str(self.merkle_rebase_support_threshold),
+                    'chunk_hash': self.chunk_hash,
+                    'block_time_history_hash': self.block_time_history_hash,
+                })
         if self.height >= FORK_2_6:
+            if self.recall_byte2 is not None:
+                json['recall_byte2'] = str(self.recall_byte2)
             json.update({
                 'hash_preimage': self.hash_preimage,
                 'recall_byte': str(self.recall_byte),
@@ -690,6 +708,11 @@ class Block(AutoRaw):
                 } if self.double_signing_proof else {},
                 'previous_cumulative_diff': str(self.previous_cumulative_diff),
             })
+            if self.height >= FORK_2_7:
+                json['nonce_limiter_info'].update({
+                    'vdf_difficulty': str(self.nonce_limiter_info.vdf_difficulty),
+                    'next_vdf_difficulty': str(self.nonce_limiter_info.next_vdf_difficulty),
+                })
         if self.height >= FORK_2_5:
             json.update({
                 'usd_to_ar_rate': [str(value) for value in self.usd_to_ar_rate],
@@ -901,7 +924,7 @@ class Block(AutoRaw):
             stream.write(arintenc(
                 self.nonce_limiter_info.next_vdf_difficulty,        8))
 
-        if self.height >= FORK_2_8:
+        if self.height >= FORK_2_8t:
             stream.write(erlintenc(self.packing_difficulty,         8))
             stream.write(arbinenc(self.unpacked_chunk_hash_raw,     8))
             stream.write(arbinenc(self.unpacked_chunk2_hash_raw,    8))
@@ -1079,27 +1102,31 @@ if __name__ == '__main__':
                     return False
         else:
             return True
-    assert dict_cmp(Block.frombytes(BLOCK_GEN_bytes).tojson(), BLOCK_GEN_json)
-    assert bin_cmp(Block.fromjson(  BLOCK_GEN_json).tobytes(), BLOCK_GEN_bytes)
-    assert dict_cmp(Block.frombytes(BLOCK_HT1_bytes).tojson(), BLOCK_HT1_json)
-    assert bin_cmp(Block.fromjson(  BLOCK_HT1_json).tobytes(), BLOCK_HT1_bytes)
-    assert dict_cmp(Block.frombytes(BLOCK_1_6_bytes).tojson(), BLOCK_1_6_json)
-    assert bin_cmp(Block.fromjson(  BLOCK_1_6_json).tobytes(), BLOCK_1_6_bytes)
-    assert dict_cmp(Block.frombytes(BLOCK_1_7_bytes).tojson(), BLOCK_1_7_json)
-    assert bin_cmp(Block.fromjson(  BLOCK_1_7_json).tobytes(), BLOCK_1_7_bytes)
-    assert dict_cmp(Block.frombytes(BLOCK_1_8_bytes).tojson(), BLOCK_1_8_json)
-    assert bin_cmp(Block.fromjson(  BLOCK_1_8_json).tobytes(), BLOCK_1_8_bytes)
-    assert dict_cmp(Block.frombytes(BLOCK_1_9_bytes).tojson(), BLOCK_1_9_json)
-    assert bin_cmp(Block.fromjson(  BLOCK_1_9_json).tobytes(), BLOCK_1_9_bytes)
-    assert dict_cmp(Block.frombytes(BLOCK_2_0_bytes).tojson(), BLOCK_2_0_json)
-    assert bin_cmp(Block.fromjson(  BLOCK_2_0_json).tobytes(), BLOCK_2_0_bytes)
-    assert dict_cmp(Block.frombytes(BLOCK_2_2_bytes).tojson(), BLOCK_2_2_json)
-    assert bin_cmp(Block.fromjson(  BLOCK_2_2_json).tobytes(), BLOCK_2_2_bytes)
-    assert dict_cmp(Block.frombytes(BLOCK_2_3_bytes).tojson(), BLOCK_2_3_json)
-    assert bin_cmp(Block.fromjson(  BLOCK_2_3_json).tobytes(), BLOCK_2_3_bytes)
-    assert dict_cmp(Block.frombytes(BLOCK_2_4_bytes).tojson(), BLOCK_2_4_json)
-    assert bin_cmp(Block.fromjson(  BLOCK_2_4_json).tobytes(), BLOCK_2_4_bytes)
-    assert dict_cmp(Block.frombytes(BLOCK_2_5_bytes).tojson(), BLOCK_2_5_json)
-    assert bin_cmp(Block.fromjson(  BLOCK_2_5_json).tobytes(), BLOCK_2_5_bytes)
-    assert dict_cmp(Block.frombytes(BLOCK_2_6_bytes).tojson(), BLOCK_2_6_json)
-    assert bin_cmp(Block.fromjson(  BLOCK_2_6_json).tobytes(), BLOCK_2_6_bytes)
+    assert dict_cmp(Block.frombytes(BLOCK_GEN_bytes).tojson(),   BLOCK_GEN_json)
+    assert bin_cmp(Block.fromjson(  BLOCK_GEN_json).tobytes(),   BLOCK_GEN_bytes)
+    assert dict_cmp(Block.frombytes(BLOCK_HT1_bytes).tojson(),   BLOCK_HT1_json)
+    assert bin_cmp(Block.fromjson(  BLOCK_HT1_json).tobytes(),   BLOCK_HT1_bytes)
+    assert dict_cmp(Block.frombytes(BLOCK_1_6_bytes).tojson(),   BLOCK_1_6_json)
+    assert bin_cmp(Block.fromjson(  BLOCK_1_6_json).tobytes(),   BLOCK_1_6_bytes)
+    assert dict_cmp(Block.frombytes(BLOCK_1_7_bytes).tojson(),   BLOCK_1_7_json)
+    assert bin_cmp(Block.fromjson(  BLOCK_1_7_json).tobytes(),   BLOCK_1_7_bytes)
+    assert dict_cmp(Block.frombytes(BLOCK_1_8_bytes).tojson(),   BLOCK_1_8_json)
+    assert bin_cmp(Block.fromjson(  BLOCK_1_8_json).tobytes(),   BLOCK_1_8_bytes)
+    assert dict_cmp(Block.frombytes(BLOCK_1_9_bytes).tojson(),   BLOCK_1_9_json)
+    assert bin_cmp(Block.fromjson(  BLOCK_1_9_json).tobytes(),   BLOCK_1_9_bytes)
+    assert dict_cmp(Block.frombytes(BLOCK_2_0_bytes).tojson(),   BLOCK_2_0_json)
+    assert bin_cmp(Block.fromjson(  BLOCK_2_0_json).tobytes(),   BLOCK_2_0_bytes)
+    assert dict_cmp(Block.frombytes(BLOCK_2_2_bytes).tojson(),   BLOCK_2_2_json)
+    assert bin_cmp(Block.fromjson(  BLOCK_2_2_json).tobytes(),   BLOCK_2_2_bytes)
+    assert dict_cmp(Block.frombytes(BLOCK_2_3_bytes).tojson(),   BLOCK_2_3_json)
+    assert bin_cmp(Block.fromjson(  BLOCK_2_3_json).tobytes(),   BLOCK_2_3_bytes)
+    assert dict_cmp(Block.frombytes(BLOCK_2_4_bytes).tojson(),   BLOCK_2_4_json)
+    assert bin_cmp(Block.fromjson(  BLOCK_2_4_json).tobytes(),   BLOCK_2_4_bytes)
+    assert dict_cmp(Block.frombytes(BLOCK_2_5_bytes).tojson(),   BLOCK_2_5_json)
+    assert bin_cmp(Block.fromjson(  BLOCK_2_5_json).tobytes(),   BLOCK_2_5_bytes)
+    assert dict_cmp(Block.frombytes(BLOCK_2_6_bytes).tojson(),   BLOCK_2_6_json)
+    assert bin_cmp(Block.fromjson(  BLOCK_2_6_json).tobytes(),   BLOCK_2_6_bytes)
+    assert dict_cmp(Block.frombytes(BLOCK_2_6_8_bytes).tojson(), BLOCK_2_6_8_json)
+    assert bin_cmp(Block.fromjson(  BLOCK_2_6_8_json).tobytes(), BLOCK_2_6_8_bytes)
+    assert dict_cmp(Block.frombytes(BLOCK_2_7_bytes).tojson(),   BLOCK_2_7_json)
+    assert bin_cmp(Block.fromjson(  BLOCK_2_7_json).tobytes(),   BLOCK_2_7_bytes)
