@@ -39,6 +39,12 @@ def utf8dec_if_bytes(data):
     else:
         return data
 
+def int_if_not_none(val):
+    if val is None:
+        return None
+    else:
+        return int(val)
+
 def erlintenc(integer, bits):
     integer = int(integer)
     return integer.to_bytes(bits // 8, 'big')

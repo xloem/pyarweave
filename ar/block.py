@@ -3,6 +3,7 @@ import io
 from ar.utils import (
     erlintenc, arbinenc, arintenc,
     erlintdec, arbindec, arintdec,
+    int_if_not_none,
     b64enc_if_not_str, b64dec_if_not_bytes,
     b64enc, b64dec, AutoRaw
 )
@@ -23,7 +24,7 @@ from . import INITIAL_VDF_DIFFICULTY
 # 2.0       [X]         [X]         [X]         [X]         unstarted   unstarted
 # 2.4       [X]         [X]         [X]         [X]         unstarted   unstarted
 # 2.5       [X]         [X]         [X]         [X]         notes       unstarted
-# 2.6       drafted     drafted     drafted     drafted     unstarted   unstarted
+# 2.6       [X]         [X]         [X]         [X]         unstarted   unstarted
 # 2.6.8     drafted     drafted     [ ]         [ ]         unstarted   unstarted
 # 2.7       drafted     drafted     [ ]         [ ]         unstarted   unstarted
 # 2.7.1     drafted     drafted     [ ]         [ ]         unstarted   unstarted
@@ -340,10 +341,10 @@ class Block(AutoRaw):
     ):
         self.nonce = b64enc_if_not_str(nonce)
         self.previous_block = b64enc_if_not_str(previous_block)
-        self.timestamp = timestamp
-        self.last_retarget = last_retarget
-        self.diff = diff
-        self.height = height
+        self.timestamp = int(timestamp)
+        self.last_retarget = int(last_retarget)
+        self.diff = int(diff)
+        self.height = int(height)
         self.hash = b64enc_if_not_str(hash)
         self.indep_hash = b64enc_if_not_str(indep_hash)
         if len(txs) and not isinstance(txs[0],Transaction):
@@ -358,24 +359,30 @@ class Block(AutoRaw):
         else:
             self.reward_addr_raw = b64dec_if_not_bytes(reward_addr)
         self.tags = tags
-        self.reward_pool = reward_pool
-        self.weave_size = weave_size
-        self.block_size = block_size
-        self.cumulative_diff = cumulative_diff
+        self.reward_pool = int(reward_pool)
+        self.weave_size = int(weave_size)
+        self.block_size = int(block_size)
+        self.cumulative_diff = int(cumulative_diff)
         self.poa = poa
 
-        self.usd_to_ar_rate = usd_to_ar_rate
-        self.scheduled_usd_to_ar_rate = scheduled_usd_to_ar_rate
-        self.packing_2_5_threshold = packing_2_5_threshold
-        self.strict_data_split_threshold = strict_data_split_threshold
+        self.usd_to_ar_rate = [
+            int_if_not_none(num)
+            for num in usd_to_ar_rate
+        ]
+        self.scheduled_usd_to_ar_rate = [
+            int_if_not_none(num)
+            for num in scheduled_usd_to_ar_rate
+        ]
+        self.packing_2_5_threshold = int_if_not_none(packing_2_5_threshold)
+        self.strict_data_split_threshold = int_if_not_none(strict_data_split_threshold)
 
         # 2.6
 
         self.hash_preimage = b64enc_if_not_str(hash_preimage)
-        self.recall_byte = recall_byte
-        self.reward = reward
+        self.recall_byte = int_if_not_none(recall_byte)
+        self.reward = int_if_not_none(reward)
         self.previous_solution_hash = b64enc_if_not_str(previous_solution_hash)
-        self.partition_number = partition_number
+        self.partition_number = int_if_not_none(partition_number)
         if nonce_limiter_info is None:
             self.nonce_limiter_info = self.NonceLimiterInfo()
         else:
@@ -384,18 +391,19 @@ class Block(AutoRaw):
             self.poa2 = self.POA()
         else:
             self.poa2 = poa2
-        self.recall_byte2 = recall_byte2
+        self.recall_byte2 = int_if_not_none(recall_byte2)
         self.signature = b64enc_if_not_str(signature)
         self.reward_key = b64enc_if_not_str(reward_key)
-        self.price_per_gib_minutes = price_per_gib_minute
-        self.scheduled_price_per_gib_minute = scheduled_price_per_gib_minute
-        self.debt_supply = debt_supply
-        self.kryder_plus_rate_multiplier = kryder_plus_rate_multiplier
-        self.kryder_plus_rate_multiplier_latch = kryder_plus_rate_multiplier_latch
-        self.denomination = denomination
-        self.redenomination_height = redenomination_height
+        self.price_per_gib_minute = int_if_not_none(price_per_gib_minute)
+        self.scheduled_price_per_gib_minute = int_if_not_none(scheduled_price_per_gib_minute)
+        self.reward_history_hash = b64enc_if_not_str(reward_history_hash)
+        self.debt_supply = int_if_not_none(debt_supply)
+        self.kryder_plus_rate_multiplier = int_if_not_none(kryder_plus_rate_multiplier)
+        self.kryder_plus_rate_multiplier_latch = int_if_not_none(kryder_plus_rate_multiplier_latch)
+        self.denomination = int_if_not_none(denomination)
+        self.redenomination_height = int_if_not_none(redenomination_height)
         self.double_signing_proof = double_signing_proof
-        self.previous_cumulative_diff = previous_cumulative_diff
+        self.previous_cumulative_diff = int_if_not_none(previous_cumulative_diff)
 
         # 2.7
         
@@ -405,7 +413,7 @@ class Block(AutoRaw):
         
         # 2.8
 
-        self.packing_difficulty = packing_difficulty
+        self.packing_difficulty = int_if_not_none(packing_difficulty)
         self.unpacked_chunk_hash = b64enc_if_not_str(unpacked_chunk_hash)
         self.unpacked_chunk2_hash = b64enc_if_not_str(unpacked_chunk2_hash)
 
@@ -415,7 +423,7 @@ class Block(AutoRaw):
             tx_path = '', data_path = '',
             chunk = '', unpacked_chunk = '',
         ):
-            self.option = option
+            self.option = int_if_not_none(option)
             self.tx_path = b64enc_if_not_str(tx_path)
             self.data_path = b64enc_if_not_str(data_path)
             self.chunk = b64enc_if_not_str(chunk)
@@ -433,9 +441,9 @@ class Block(AutoRaw):
             self.prev_output = b64enc_if_not_str(prev_output)
             self.seed = b64enc_if_not_str(seed)
             self.next_seed = b64enc_if_not_str(next_seed)
-            self.partition_upper_bound = partition_upper_bound
-            self.next_partition_upper_bound = next_partition_upper_bound
-            self.global_step_number = global_step_number
+            self.partition_upper_bound = int_if_not_none(partition_upper_bound)
+            self.next_partition_upper_bound = int_if_not_none(next_partition_upper_bound)
+            self.global_step_number = int_if_not_none(global_step_number)
             if last_step_checkpoints and type(last_step_checkpoints[0]) is str:
                 self.last_step_checkpoints = last_step_checkpoints
             else:
@@ -485,40 +493,20 @@ class Block(AutoRaw):
     def fromjson(cls, data):
         kwparams = {**data}
 
-        # process objects, convert integer strings to integers, rename fields
+        # process objects, rename subfields
         for param in ['poa', 'poa2']:
             poakwparams = kwparams.get(param)
             if poakwparams is not None:
-                poakwparams = {**poakwparams}
-                for param2 in ['option']:
-                    poakwparams[param2] = int(poakwparams[param2])
                 kwparams[param] = cls.POA(**poakwparams)
         for param in ['nonce_limiter_info']:
             nlikwparams = kwparams.get(param)
             if nlikwparams is not None:
-                nlikwparams['global_step_number'] = int(nlikwparams['global_step_number'])
-                # rename fields
-                nlikwparams['partition_upper_bound'] = int(nlikwparams.pop('zone_upper_bound'))
-                nlikwparams['next_partition_upper_bound'] = int(nlikwparams.pop('next_zone_upper_bound'))
+                nlikwparams = {**nlikwparams}
+                # rename
+                nlikwparams['partition_upper_bound'] = nlikwparams.pop('zone_upper_bound')
+                nlikwparams['next_partition_upper_bound'] = nlikwparams.pop('next_zone_upper_bound')
                 nlikwparams['steps'] = nlikwparams.pop('checkpoints')
                 kwparams[param] = cls.NonceLimiterInfo(**nlikwparams)
-        for param in ['usd_to_ar_rate', 'scheduled_usd_to_ar_rate']:
-            lst = kwparams.get(param)
-            if lst is not None:
-                kwparams[param] = [int(amount) for amount in lst]
-        for param in [
-            'timestamp', 'last_retarget', 'diff', 'height',
-            'reward_pool', 'weave_size' , 'block_size', 'cumulative_diff',
-            'packing_2_5_threshold', 'strict_data_split_threshold',
-            'reward', 'price_per_gib_minute', 'schedule_price_per_gib_minute',
-            'debt_supply', 'kryder_plus_rate_multiplier',
-            'kryder_plus_rate_multiplier_latch', 'denomination',
-            'redenomination_height', 'previous_cumulative_diff',
-            'packing_difficulty',
-        ]:
-            str = kwparams.get(param)
-            if str is not None:
-                kwparams[param] = int(str)
 
         # remove internal fields
         kwparams.pop('tx_tree', None)
@@ -580,7 +568,7 @@ class Block(AutoRaw):
             blk.recall_byte                = arintdec(stream, 16)
             blk.reward                     = arintdec(stream, 8)
             blk.signature_raw              = arbindec(stream, 16)
-            blk.recall_byte_2              = arintdec(stream, 16)
+            blk.recall_byte2               = arintdec(stream, 16)
             blk.previous_solution_hash_raw = arbindec(stream, 8)
             blk.partition_number           = erlintdec(stream, 256)
             blk.nonce_limiter_info = cls.NonceLimiterInfo(
@@ -594,11 +582,11 @@ class Block(AutoRaw):
                 last_step_checkpoints      = [
                     stream.read(32)
                     for idx in range(erlintdec(stream,16))
-                ][::-1],
+                ],
                 steps                      = [
                     stream.read(32)
                     for idx in range(erlintdec(stream,16))
-                ][::-1],
+                ],
                 vdf_difficulty             = None,
                 next_vdf_difficulty        = None,
             )
@@ -674,10 +662,10 @@ class Block(AutoRaw):
                     'checkpoints': self.nonce_limiter_info.steps,
                 },
                 'poa2': {
-                    'option': str(self.poa.option),
-                    'tx_path': self.poa.tx_path,
-                    'data_path': self.poa.data_path,
-                    'chunk': self.poa.chunk,
+                    'option': str(self.poa2.option),
+                    'tx_path': self.poa2.tx_path,
+                    'data_path': self.poa2.data_path,
+                    'chunk': self.poa2.chunk,
                 },
                 'signature': self.signature,
                 'reward_key': self.reward_key,
@@ -844,7 +832,7 @@ class Block(AutoRaw):
             stream.write(arintenc(self.recall_byte,                16))
             stream.write(arintenc(self.reward,                      8))
             stream.write(arbinenc(self.signature_raw,              16))
-            stream.write(arintenc(self.recall_byte_2,              16))
+            stream.write(arintenc(self.recall_byte2,               16))
             stream.write(arbinenc(self.previous_solution_hash_raw,  8))
             stream.write(erlintenc(self.partition_number,         256))
             stream.write(self.nonce_limiter_info.output_raw)
@@ -862,10 +850,11 @@ class Block(AutoRaw):
                 len(self.nonce_limiter_info.last_step_checkpoints),16))
             for last_step_checkpoint in (
                 self.nonce_limiter_info.last_step_checkpoints_raw
-            )[::-1]:
+            ):
                 stream.write(last_step_checkpoint)
-            stream.write(erlintenc(len(steps),                     16))
-            for step in self.nonce_limiter_info.steps_raw[::-1]:
+            stream.write(erlintenc(
+                len(self.nonce_limiter_info.steps),                16))
+            for step in self.nonce_limiter_info.steps_raw:
                 stream.write(step)
             stream.write(arbinenc(self.poa2.chunk_raw,             24))
             stream.write(arbinenc(self.reward_key_raw,             16))
@@ -1112,6 +1101,5 @@ if __name__ == '__main__':
     assert bin_cmp(Block.fromjson(  BLOCK_2_4_json).tobytes(), BLOCK_2_4_bytes)
     assert dict_cmp(Block.frombytes(BLOCK_2_5_bytes).tojson(), BLOCK_2_5_json)
     assert bin_cmp(Block.fromjson(  BLOCK_2_5_json).tobytes(), BLOCK_2_5_bytes)
-
-    #assert bin_cmp(Block.fromjson(  BLOCK_2_6_json).tobytes(), BLOCK_2_6_bytes)
-    #assert dict_cmp(Block.frombytes(BLOCK_2_6_bytes).tojson(), BLOCK_2_6_json)
+    assert dict_cmp(Block.frombytes(BLOCK_2_6_bytes).tojson(), BLOCK_2_6_json)
+    assert bin_cmp(Block.fromjson(  BLOCK_2_6_json).tobytes(), BLOCK_2_6_bytes)
