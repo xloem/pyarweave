@@ -26,7 +26,7 @@ from . import INITIAL_VDF_DIFFICULTY
 # 2.5       [X]         [X]         [X]         [X]         notes       unstarted
 # 2.6       [X]         [X]         [X]         [X]         unstarted   unstarted
 # 2.7       [X]         [X]         [X]         [X]         unstarted   unstarted
-# 2.7.1     drafted     drafted     [ ]         [ ]         unstarted   unstarted
+# 2.7.2     [X]         [X]         [X]         [X]         unstarted   unstarted
 # 2.8       drafted     drafted     [ ]         [ ]         unstarted   unstarted
 
 TIMESTAMP_FIELD_SIZE_LIMIT = 12
@@ -924,7 +924,7 @@ class Block(AutoRaw):
             stream.write(arintenc(
                 self.nonce_limiter_info.next_vdf_difficulty,        8))
 
-        if self.height >= FORK_2_8t:
+        if self.height >= FORK_2_8:
             stream.write(erlintenc(self.packing_difficulty,         8))
             stream.write(arbinenc(self.unpacked_chunk_hash_raw,     8))
             stream.write(arbinenc(self.unpacked_chunk2_hash_raw,    8))
@@ -1130,3 +1130,7 @@ if __name__ == '__main__':
     assert bin_cmp(Block.fromjson(  BLOCK_2_6_8_json).tobytes(), BLOCK_2_6_8_bytes)
     assert dict_cmp(Block.frombytes(BLOCK_2_7_bytes).tojson(),   BLOCK_2_7_json)
     assert bin_cmp(Block.fromjson(  BLOCK_2_7_json).tobytes(),   BLOCK_2_7_bytes)
+    assert dict_cmp(Block.frombytes(BLOCK_2_7_1_bytes).tojson(), BLOCK_2_7_1_json)
+    assert bin_cmp(Block.fromjson(  BLOCK_2_7_1_json).tobytes(), BLOCK_2_7_1_bytes)
+    assert dict_cmp(Block.frombytes(BLOCK_2_7_2_bytes).tojson(), BLOCK_2_7_2_json)
+    assert bin_cmp(Block.fromjson(  BLOCK_2_7_2_json).tobytes(), BLOCK_2_7_2_bytes)
