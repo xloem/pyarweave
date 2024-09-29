@@ -20,11 +20,12 @@ from Crypto.Hash import SHA256, SHA384
 
 # STATUS
 # MINING IS NOT PLANNED AT THIS TIME
+# edge case testing needed, such as blocks with content for the double signing proof field
 # FORK      FROMBYTES   TOBYTES     FROMJSON    TOJSON      HASHING     VALIDATION  MINING
 # gen       [X]         [X]         [X]         [X]         unstarted   unstarted   unstarted
 # 1.8       [X]         [X]         [X]         [X]         unstarted   unstarted   unstarted
 # 2.0       [X]         [X]         [X]         [X]         [X]         unstarted   unstarted
-# 2.4       [X]         [X]         [X]         [X]         [X]         unstarted
+# 2.4       [X]         [X]         [X]         [X]         [X]         unstarted   unstarted
 # 2.5       [X]         [X]         [X]         [X]         [X]         notes       unstarted
 # 2.6       [X]         [X]         [X]         [X]         [X]         unstarted   unstarted
 # 2.7       [X]         [X]         [X]         [X]         [X]         unstarted   unstarted
@@ -1270,3 +1271,13 @@ if __name__ == '__main__':
     assert dict_cmp(block_2_7_2_bytes.tojson(),                  BLOCK_2_7_2_json)
     assert bin_cmp(Block.fromjson(  BLOCK_2_7_2_json).tobytes(), BLOCK_2_7_2_bytes)
     assert block_2_7_2_bytes.compute_indep_hash_raw() == block_2_7_2_bytes.indep_hash_raw
+    import ar, tqdm
+    peer = ar.Peer()
+    for height in tqdm.tqdm(range(peer.info()['height'],ar.FORK_2_0,-1), desc='stored tests passed, trying all live blocks', unit='blk'):
+        blk_bytes = peer.block2_height(height)
+        blk_json = peer.block_height(height)
+        blk_from_bytes = Block.frombytes(blk_bytes)
+        blk_from_json = Block.fromjson(blk_json)
+        assert dict_cmp(blk_from_bytes.tojson(), blk_json)
+        assert bin_cmp(blk_from_json.tobytes(), blk_bytes)
+        assert blk_from_bytes.compute_indep_hash_raw() == blk_from_json.indep_hash_raw
