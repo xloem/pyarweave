@@ -9,6 +9,7 @@ class PeerStream(io.RawIOBase):
             if tx_root is None:
                 tx_status = peer.tx_status(txid)
                 block = ar.Block.frombytes(peer.block2_hash(tx_status['block_indep_hash']))
+                assert block.compute_indep_hash_raw() == block.indep_hash_raw()
 
                 tx_root = block.tx_root
             if data_root is None:
@@ -25,17 +26,17 @@ class PeerStream(io.RawIOBase):
         stream_last = tx_offset['offset']
         stream_size = tx_offset['size']
         stream_first = stream_last - stream_size + 1
-        return cls(peer, stream_first, offset, stream_size if length is None else min(offset + length, stream_size), tx_root, data_root)
+        return cls(peer.chunk2, stream_first, offset, stream_size if length is None else min(offset + length, stream_size), tx_root, data_root)
 
-    def __init__(self, peer, tx_start_offset, start_offset, end_offset, tx_root, data_root):
-        self.peer = peer
+    def __init__(self, peer_chunk2, tx_start_offset, start_offset, end_offset, tx_root, data_root):
+        self.peer_chunk2 = peer_chunk2.chunk2 if isinstance(peer_chunk2, ar.Peer) else peer_chunk2
         assert end_offset >= start_offset
         self.start = start_offset
         self.tx_start = tx_start_offset
         self.end = end_offset
         self.offset = self.start
-        self.tx_root_raw = ar.utils.b64dec(tx_root)
-        self.data_root_raw = ar.utils.b64dec(data_root)
+        self.tx_root_raw = ar.utils.b64dec_if_not_bytes(tx_root)
+        self.data_root_raw = ar.utils.b64dec_if_not_bytes(data_root)
         self.chunk = None
     def tell(self):
         return self.offset - self.start
@@ -63,7 +64,7 @@ class PeerStream(io.RawIOBase):
                 self.chunk.start_offset > self.offset or
                 self.chunk.end_offset <= self.offset
         ):
-            self.chunk = ar.Chunk.frombytes(self.peer.chunk2(self.offset + self.tx_start), self.tx_root_raw, self.data_root_raw)
+            self.chunk = ar.Chunk.frombytes(self.peer_chunk2(self.offset + self.tx_start), self.tx_root_raw, self.data_root_raw)
             assert self.chunk.start_offset <= self.offset
             assert self.chunk.end_offset > self.offset
 
