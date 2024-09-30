@@ -66,6 +66,14 @@ class ANS104BundleHeader:
                 return total, total + length
             total += length
 
+    def get_range_id_pairs(self):
+        total = self.get_len_bytes()
+        result = []
+        for length, id in self.length_id_pairs:
+            result.append([[total, total+length], id])
+            total += length
+        return result
+
     def get_len_bytes(self):
         return 32 + len(self.length_id_pairs) * 64
 
@@ -87,7 +95,7 @@ class ANS104BundleHeader:
     def fromjson(cls, json):
         dataitems = [DataItem.fromjson(item) for item in json['items']]
         return cls([
-            (dataitem.get_len_bytes(), dataitem.header.id)
+            [dataitem.get_len_bytes(), dataitem.header.nominal_id or dataitem.header.id]
             for dataitem in dataitems
         ], version=1)
 
@@ -108,7 +116,7 @@ class ANS104BundleHeader:
         return cls(length_id_pairs, version=2)
 
 class ANS104DataItemHeader:
-    def __init__(self, tags = [], owner=None, target=None, anchor=None, signature=None, signer=DEFAULT_SIGNER):
+    def __init__(self, tags = [], owner=None, target=None, anchor=None, signature=None, signer=DEFAULT_SIGNER, nominal_id=None):
         if isinstance(tags, (bytes, bytearray)):
             self.raw_tags = tags
         else:
@@ -121,6 +129,7 @@ class ANS104DataItemHeader:
             anchor = get_random_bytes(32)
         self.anchor = b64enc_if_not_str(anchor) if anchor else None
         self.signer = signer
+        self.nominal_id = b64enc_if_not_str(nominal_id) if nominal_id else None
 
     @property
     def signature_type(self):
@@ -212,7 +221,7 @@ class ANS104DataItemHeader:
                 for tag in self.tags
             ] if self.tags is not None else [],
             'signature': self.signature,
-            'id': self.id,
+            'id': self.nominal_id or self.id,
         }
 
     def get_len_bytes(self):
@@ -268,18 +277,19 @@ class ANS104DataItemHeader:
             target = json['target'],
             anchor = json['nonce'],
             signature = json['signature'],
-            signer = signer
+            signer = signer,
+            nominal_id = json['nominal_id'],
         )
 
     @classmethod
-    def frombytes(cls, data):
+    def frombytes(cls, data, nominal_id=None):
         if len(data) < 80:
             raise Exception('length shorter than 80 bytes')
         stream = io.BytesIO(data)
-        return cls.fromstream(stream)
+        return cls.fromstream(stream, nominal_id=None)
 
     @classmethod
-    def fromstream(cls, stream):
+    def fromstream(cls, stream, nominal_id=None):
         offset = 0
         start_tell = stream.tell()
 
@@ -342,7 +352,8 @@ class ANS104DataItemHeader:
             target = target,
             anchor = anchor,
             signature = raw_signature,
-            signer = signer
+            signer = signer,
+            nominal_id = nominal_id,
         )
     
         assert offset - raw_tags_len == result.get_len_bytes() - len(result.raw_tags)
@@ -356,7 +367,10 @@ class ANS104DataItemHeader:
             zigzag = 0
             bits = 0
             while True:
-                byte = stream.read(1)[0]
+                byte = stream.read(1)
+                if len(byte) == 0:
+                    break
+                byte = byte[0]
                 zigzag |= (byte & 0x7f) << bits
                 if byte & 0x80:
                     bits += 7
@@ -405,6 +419,8 @@ class ANS104DataItemHeader:
                     return varint
         def avrobytesenc(data):
             return avrolongenc(len(data)) + data
+        if len(tags) == 0:
+            return b''
         return b''.join([
             avrolongenc(len(tags)),
             *[
@@ -412,8 +428,26 @@ class ANS104DataItemHeader:
                 for tag in (normalize_tag(tag) for tag in tags)
                 for key in ("name", "value")
             ],
-            b'\0' if len(tags) else b''
+            b'\0'
         ])
+
+    @classmethod
+    def all_from_tags_stream(cls, tags, stream, step=1):
+        fmt = None
+        for tag in tags:
+            if tag['name'] == b'Bundle-Format':
+                fmt = tag['value']
+        #print(fmt)
+        if fmt == b'json':
+            yield from [di.header for di in Bundle.fromjson(json.load(stream)).dataitems[::step]]
+        elif fmt == b'binary':
+            start = stream.tell()
+            header = ANS104BundleHeader.fromstream(stream)
+            for range, id in header.get_range_id_pairs()[::step]:
+                stream.seek(start + range[0])
+                di_header = cls.fromstream(stream, nominal_id=id)
+                di_header_len = di_header.get_len_bytes()
+                yield [di_header, stream, start + range[0] + di_header_len, range[1] - range[0] - di_header_len]
 
 class DataItem:
     def __init__(self, header = None, data = b'', version = 2):
@@ -448,7 +482,8 @@ class DataItem:
     def sign(self, private_key):
         self.header.raw_owner = self.header.signer.raw_owner(private_key)
         self.header.raw_signature = self.header.signer.sign(private_key, self.get_raw_signature_data())
-        return self.header.id
+        self.header.nominal_id = self.header.id
+        return self.header.nominal_id
 
     def verify(self):
         if len(self.header.tags) > 128:
@@ -465,6 +500,8 @@ class DataItem:
                 return False
             if len(tag['value']) > 3072:
                 return False
+        if self.header.nominal_id != self.header.id:
+            return False
         public_key = self.header.signer.public_key(self.header.raw_owner)
         return self.header.signer.verify(public_key, self.get_raw_signature_data(), self.header.raw_signature)
 
@@ -492,7 +529,7 @@ class DataItem:
             header = ANS104BundleHeader.fromstream(stream)
             offset = header.get_len_bytes()
             for length, id in header.length_id_pairs:
-                dataitem = cls.fromstream(stream, length=length)
+                dataitem = cls.fromstream(stream, length=length, nominal_id=id)
                 offset += length
                 yield dataitem
 
@@ -501,13 +538,13 @@ class DataItem:
         return cls(header = ANS104DataItemHeader.fromjson(json), data = b64dec(json['data']), version = 1)
 
     @classmethod
-    def frombytes(cls, data, length = None):
+    def frombytes(cls, data, length = None, nominal_id = None):
         stream = io.BytesIO(data)
-        return cls.fromstream(stream, length = length)
+        return cls.fromstream(stream, length = length or len(data), nominal_id = nominal_id)
 
     @classmethod
-    def fromstream(cls, stream, length = None):
-        header = ANS104DataItemHeader.fromstream(stream)
+    def fromstream(cls, stream, length = None, nominal_id = None):
+        header = ANS104DataItemHeader.fromstream(stream, nominal_id = nominal_id)
         if length is None:
             data = stream.read()
         else:
@@ -528,7 +565,7 @@ class Bundle:
     @property
     def header(self):
         return ANS104BundleHeader({
-            item.header.id: item.get_len_bytes()
+            item.header.nominal_id: item.get_len_bytes()
             for item in self.dataitems
         })
 
@@ -556,5 +593,5 @@ class Bundle:
     @classmethod
     def fromstream(cls, stream):
         header = ANS104BundleHeader.fromstream(stream)
-        dataitems = [DataItem.fromstream(stream, length) for length, id in header.length_id_pairs]
+        dataitems = [DataItem.fromstream(stream, length, nominal_id=id) for length, id in header.length_id_pairs]
         return cls(dataitems, version = 2)
