@@ -1,6 +1,6 @@
 import time
 
-from ar import Peer, ArweaveNetworkException, ArweaveException, ANS104BundleHeader, Bundle, DataItem
+from ar import Peer, ArweaveNetworkException, ArweaveException, ANS104BundleHeader, ANS104DataItemHeader, Bundle, DataItem
 from bundlr import Node
 
 class BundleWatcher:
@@ -26,24 +26,33 @@ class BundleWatcher:
                 
             for txid in new_block_txs.difference(old_block_txs).union(new_pending_txs).difference(old_pending_txs).union(missing_txs):
                 #txid = 'vPwbFzEYlE8Bti7phVRt0ZMPtNG65FfBYM8RwHdS6tY'
-                tags = self.peer.unconfirmed_tx(txid)['tags']
-                print(txid, tags)
+                tx = self.peer.unconfirmed_tx(txid)
+                tags = tx['tags']
+                #print(txid, tags)
                 if any((tag['name'].startswith(b'Bundle') for tag in tags)):
+                    #print(txid, tags)
                     try:
-                        stream = self.peer.stream(txid)
+                        stream = self.peer.stream(txid,reupload=False)
                     except ArweaveException as exc:
-                        #print(exc)
+                        print(exc)
                         missing_txs.add(txid)
                         continue
+                    except Exception as exc:
+                        print(exc)
+                        raise
                     missing_txs.discard(txid)
                     with stream:
-                        #header = ANS104Header.from_tags_stream(tags, stream)
+                        #header = ANS104BundleHeader.from_tags_stream(tags, stream)
                         #header.data = lambda: Bundle.from_tags_stream(tags, stream)# get individual item
                         #yield from Bundle.from_tags_stream(tags, stream).dataitems
                         try:
-                            yield from DataItem.all_from_tags_stream(tags, stream)
+                            for ditem_data in ANS104DataItemHeader.all_from_tags_stream(tags, stream):
+                                yield tx, *ditem_data
+                        #    yield from ANS104DataItemHeader.all_from_tags_stream(tags, stream)
+                        #    yield from DataItem.all_from_tags_stream(tags, stream)
                         except ArweaveNetworkException as exc:
-                            missing_txs.add(Txid)
+                            print('pending tx cause of', exc)
+                            missing_txs.add(txid)
                             continue
                     #headers = 
                     #print(txid)
@@ -52,10 +61,11 @@ class BundleWatcher:
             now = time.time()
             period = 30
             if mark + period > now:
+                print('sleeping for', mark + period - now, 'seconds')
                 time.sleep(mark + period - now)
                 mark += period
             else:
                 mark = now
 
-for item in BundleWatcher().run():
-    print('bundled', item.header.id, item.header.tags)
+for bundle, ditem, stream, offset, length in BundleWatcher().run():
+    print('bundled', ditem.id, ditem.tags)

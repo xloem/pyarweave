@@ -1,7 +1,7 @@
 import io, ar
 import yarl39
 import json, tqdm
-import bisect, itertools, threading, queue
+import bisect, itertools, threading, time, queue, warnings
 import lru_idx_data_cache
 
 class LoadBalancer:
@@ -22,7 +22,22 @@ class LoadBalancer:
                 self.balancer._uses.sort()
                 self._selection = self.balancer._uses[0]
                 self._selection[0] += 1
+            self._blacklist = []
             return self.balancer._servers[self._selection[1]]
+        def change(self):
+            self._blacklist.append(self._selection)
+            with self.balancer._lock:
+                self.balancer._uses.sort()
+                self._selection[0] -= 1
+                for selection in self.balancer._uses:
+                    if selection not in self._blacklist:
+                        self._selection = selection
+                        self._selection[0] += 1
+                        return self.balancer._servers[self._selection[1]]
+            warnings.warn('changed through all servers, waiting 1 second and resetting')
+            time.sleep(1)
+            return self.__enter__()
+                    
         def __exit__(self, *params):
             with self.balancer._lock:
                 self._selection[0] -= 1
@@ -180,20 +195,29 @@ class DownStream(io.RawIOBase):
             raise
     def _data(self, txid):
         # might be faster to push raw headers to raw sockets here or use libcurl
-        try:
-            with (
-                self.gws.use() as gw,
-                gw._request(txid, method='GET') as response
-            ):
-                return response.content
-        except ar.ArweaveNetworkException as exc:
-            if exc.args[1] == 404 and len(self._bundlrs):
-                for bundlr in self._bundlrs:
-                    try:
-                        return bundlr.data(txid)
-                    except Exception as exc2:
-                        bundlr_exception = exc2 # just in case debugging and helpful to use variable name
-            raise
+        selector = self.gws.use()
+        with selector as gw:
+            while True:
+              try:
+                with gw._request(txid, method='GET') as response:
+                    return response.content
+              except ar.ArweaveNetworkException as exc:
+                #if exc.args[1] == 404:
+                #    for gw in self.gws.servers:
+                #        try:
+                #            with gw._request(txid, method='GET') as response:
+                #                return response.content
+                #        except:
+                #            continue
+                #    if len(self._bundlrs):
+                #        for bundlr in self._bundlrs:
+                #            try:
+                #                return bundlr.data(txid)
+                #            except Exception as exc2:
+                #                bundlr_exception = exc2 # just in case debugging and helpful to use variable name
+                gw = selector.change()
+                continue
+                #raise
     def _data2(self, idx):
         data = self._data(self._ids[idx])
         #self._cache[idx] = data
@@ -248,17 +272,29 @@ def main():
         help='Comma-separated list of gateways to use, or an integer count. default: "' + DEFAULT_GWS + '"',
         default=DEFAULT_GWS
     )
+    parser.add_argument(
+        '--blacklist', '-bl',
+        type=str,
+        help='Comma-separated list of gateways to never use.',
+        default=''
+    )
     args = parser.parse_args()
+
+    bl = set(args.blacklist.split(','))
 
     if args.gateways.isdecimal():
         num_gws = int(args.gateways)
-        ar.gateways.update_best(num_gws)
+        ar.gateways.update_best(num_gws+len(bl))
         ar.gateways.fetch_and_update_new()
-        args.gateways = ','.join([
-            ar.gateways.GOOD[idx]
-            for idx in range(num_gws)
-        ])
-    gws = args.gateways.split(',')
+        gws = []
+        for gw in ar.gateways.GOOD:
+            if gw not in bl:
+                gws.append(gw)
+                if len(gws) >= num_gws:
+                    break
+    else:
+        gws = list(set(args.gateways.split(',')) - set(args.blacklist.split(',')))
+    
     conns_per_gw = ar.Peer().max_outgoing_connections // len(gws)
 
     with DownStream([ar.Peer(gw, outgoing_connections=conns_per_gw, requests_per_period = None) for gw in gws], args.json, cachesize=102400*3).expand() as stream:
