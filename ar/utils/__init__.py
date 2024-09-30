@@ -98,9 +98,11 @@ def get_tags(tags, name):
     name = utf8enc_if_not_bytes(name)
     return [tag['value'] for tag in tags if tag['name'] == name]
 
-def owner_to_address(owner):
-    result = b64enc(hashlib.sha256(b64dec(utf8enc_if_not_bytes(owner))).digest())
+def raw_owner_to_raw_address(raw_owner):
+    return hashlib.sha256(raw_owner).digest()
 
+def owner_to_address(owner):
+    result = b64enc(raw_owner_to_raw_address(b64dec(owner)))
     return result
 
 
