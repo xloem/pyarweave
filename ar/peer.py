@@ -11,6 +11,18 @@ import erlang
 import json
 import requests, urllib3, socket
 
+# notes on network participation:
+# 2024-09-29
+# - ar_http_iface_middleware.erl handle_post_tx_accepted
+#       posting valid transactions decrements IP-based throttling
+# - ar_peers.erl BLOCK_REJECTION* when receiving a block
+#       sending an invalid block can result in a temporary ban?
+# - ar_blacklist_middleware.erl update_ip_addr
+#       the ip throttle period is 30 seconds
+# - ar_network_middleware.erl maybe_add_peer
+#       PEERS ARE ADDED IF A REQUEST IS MADE WITH THE x-p2p-port HEADER SET
+#       the x-release header is also read to identify an integer Release
+
 def binary_to_term(b):
     # arweave.live seems to replace nonascii chars with this sequence :/
     # occasionally things will work if it's turned back into the etf byte
