@@ -15,7 +15,6 @@
 import hashlib
 import struct
 import functools
-from .file_io import read_file_chunks
 from . import concat_buffers, b64enc, b64dec
 from json import JSONEncoder
 
@@ -247,7 +246,11 @@ def chunk_data(file_handler):
 
     cursor = 0
 
-    for chunk in read_file_chunks(file_handler, MAX_CHUNK_SIZE):
+    while True:
+        chunk = file_handler.read(MAX_CHUNK_SIZE)
+        if not chunk:
+            break
+
         data_hash = hash_raw(chunk)
 
         cursor += len(chunk)

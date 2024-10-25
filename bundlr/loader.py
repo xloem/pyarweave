@@ -42,6 +42,7 @@ class Loader:
 
     # this applies to general bundles and could be part of an ans104-associated base class
     def data(self, txid, bundleid = None, blockid = None):
+        '''Fetch stored data based on passed locators.'''
         if bundleid is not None:
             tags = self.tx_tags(bundleid)
             stream = self.stream(bundleid)
