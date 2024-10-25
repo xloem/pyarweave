@@ -194,7 +194,8 @@ class ArweaveNetworkException(ArweaveException):
 __all__ = [
     'Peer', 'Wallet', 'Transaction', 'Block',
     'Bundle', 'DataItem', 'ANS104BundleHeader', 'ANS104DataItemHeader',
-    'arql', 'ArweaveException', 'logger', 'ArweaveTransactionException']
+    'arql', 'ArweaveException', 'logger', 'ArweaveTransactionException',
+    'transaction_uploader']
 
 ArweaveTransactionException = ArweaveException
 
@@ -207,4 +208,5 @@ from .stream import PeerStream, GatewayStream
 from .arweave_lib import arql
 from .manifest import Manifest
 from .bundle import Bundle, DataItem, ANS104BundleHeader, ANS104DataItemHeader
+from .utils import transaction_uploader
 
