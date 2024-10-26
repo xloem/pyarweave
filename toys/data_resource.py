@@ -161,6 +161,8 @@ class Sequence:
         tags = dict(self.extra_tags)
         tags.update(post_tags)
         logger.debug('post ' + repr(tags))
+        for tag, val in self.arguments.get('tags',{}).items():
+            assert tags[tag] == val or not "posted item does not match sequence tags"
         di = ar.DataItem(data = data)
         assert self.clock_tagname not in tags
         assert self.prev_tagname not in tags
@@ -375,7 +377,10 @@ class DataResource:
                     address = wallet_or_address
         if wallet is not None:
             if bundlr is None:
-                import bundlr
+                try:
+                    import bundlr
+                except:
+                    import irys as bundlr
                 bundlr = bundlr.Node()
             address = wallet.address
         self.wallet = wallet
@@ -405,7 +410,8 @@ class DataResource:
             data = data.encode()
         if type(data) is bytes:
             size = len(data)
-            data = io.BytesIO(data)
+            if self.large_data:
+                data = io.BytesIO(data)
         else:
             size = os.stat(data.name).st_size
         self.lock.use(self._post_time)
@@ -427,7 +433,7 @@ class DataResource:
             return fut
         else:
             with self._update_post_time():
-                return self.seq.post(data, **tags)
+                return self.seqs[seq].post(data, **tags)
     def __enter__(self):
         self.lock.lock(**self.lock_params)
         with self._update_post_time():
