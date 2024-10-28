@@ -311,7 +311,7 @@ class Lock:
                 pbar.update(now - start - pbar.n)
                 #print('waiting for', holder, 'now =', now, end='\r', flush=True)
                 #pbar.desc = 'lock waiting for ' + holder['id'] + ' for ' + str(int(sleep_time)) + 's'
-                time.sleep(speed_time)
+                time.sleep(sleep_time)
 
         # it is now officially our turn to take the lock, until timeout
 
