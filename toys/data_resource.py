@@ -1,4 +1,4 @@
-import base64, bisect, collections, datetime, hashlib, io, json, logging, math, os, threading, time
+import base64, bisect, collections, datetime, hashlib, io, json, logging, math, os, random, threading, time
 import concurrent.futures
 
 import ar
@@ -8,7 +8,7 @@ import ditem_load, ditem_down_stream
 
 # general utils
 def utctime():
-    return datetime.datetime.now(datetime.UTC).timestamp()
+    return datetime.datetime.now(datetime.timezone.utc).timestamp()
 logger = logging.getLogger(__name__)
 
 # graphql helper
@@ -52,6 +52,7 @@ def encode_graphql_arguments(obj,key=None,braces='()'):
 #    #return ','.join(f'{key}:{val if key=="sort" else json.dumps(val)}' for key, val in arguments.items())
 def iterate_graphql(peers, field:str, arguments:dict, queries:str, continuing_arguments:dict = None, poll_seconds = 1, poll_instances = 0):
     query = f'''query{{{field}{encode_graphql_arguments(arguments)}{{edges{{cursor node{{{queries}}}}}}}}}'''
+    random.shuffle(peers)
     for peer in peers:
         try:
             result = peer.graphql(query)['data'][field]['edges']
@@ -149,7 +150,7 @@ class Sequence:
                     block_entries.clear()
                 bisect.insort(block_entries, tx, key=lambda tx:[
                     reverse * int(tx['tags'][self.clock_tagname]),
-                    reverse * int.from_bytes(tx['id'].encode()),
+                    reverse * int.from_bytes(tx['id'].encode(), 'big'),
                 ])
             yield from block_entries
             arguments['after'] = last and last['cursor']
@@ -288,7 +289,7 @@ class Lock:
         })
 
         # here we have to wait for it to be our turn to lock it
-        with tqdm.tqdm(desc='lock broadcast and wait',unit='s',leave=False) as pbar:
+        with tqdm.tqdm(desc='lock broadcast ' + self._locking_tx['id'],unit='s',leave=False) as pbar:
             while True:
                 holder = next(self.query_iterate(
                     now, # this is intended to always let our transaction through, via the timeout catch in the next condition below
