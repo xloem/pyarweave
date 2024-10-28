@@ -50,9 +50,36 @@ def encode_graphql_arguments(obj,key=None,braces='()'):
 #def gqlargs(arguments):
 #    return encode_graphql_arguments(arguments)
 #    #return ','.join(f'{key}:{val if key=="sort" else json.dumps(val)}' for key, val in arguments.items())
-def iterate_graphql(peer, field:str, arguments:dict, queries:str, continuing_arguments:dict = None, poll_seconds = 1, poll_instances = 0):
+def iterate_graphql(peers, field:str, arguments:dict, queries:str, continuing_arguments:dict = None, poll_seconds = 1, poll_instances = 0):
     query = f'''query{{{field}{encode_graphql_arguments(arguments)}{{edges{{cursor node{{{queries}}}}}}}}}'''
-    result = peer.graphql(query)['data'][field]['edges']
+    for peer in peers:
+        try:
+            result = peer.graphql(query)['data'][field]['edges']
+            break
+        except ar.ArweaveException as e:
+            exc = e
+            continue
+    else:
+        if type(exc.args[0]) is list and type(exc.args[0][0]) is dict and exc.args[0][0].get('message') == 'query timed out' and arguments.get('tags'):
+            print('query for tags timed out, manually filtering :s')
+            print(query)
+            tags = arguments.pop('tags')
+            if continuing_arguments is not None:
+                continuing_arguments.pop('tags')
+            assert 'tags{name value}' in queries # if tags not returned hard to manually iterate, would add them to queries
+            for item in tqdm.tqdm(iterate_graphql(peers, field, arguments, queries, continuing_arguments, poll_seconds, poll_instances), unit='item', leave=True):
+                matched_tags = set()
+                for tag in item['tags']:
+                    tag_name = tag['name']
+                    match = tags.get(tag_name)
+                    if match is not None and match == tag['value']:
+                        matched_tags.add(tag_name)
+                if len(matched_tags) >= len(tags):
+                    yield item
+                else:
+                    time.sleep(0.05)
+        else:
+            raise exc
     logger.debug('QUERY: ' + query)
     logger.debug('RESULT: ' + repr(result))
     yield from [{'cursor':item['cursor'],**item['node']} for item in result]
@@ -107,7 +134,7 @@ class Sequence:
             block_entries = []
             last = None
             for idx, tx in enumerate(iterate_graphql(
-                self.peers[0], 'transactions',
+                self.peers, 'transactions',
                 {**self.arguments, **arguments},
                 'id owner{address}tags{name value}block{id height}bundledIn{id}',
                 poll_seconds = _poll_seconds,
@@ -261,7 +288,7 @@ class Lock:
         })
 
         # here we have to wait for it to be our turn to lock it
-        with tqdm.tqdm(desc='lock',unit='s',leave=False) as pbar:
+        with tqdm.tqdm(desc='lock broadcast and wait',unit='s',leave=False) as pbar:
             while True:
                 holder = next(self.query_iterate(
                     now, # this is intended to always let our transaction through, via the timeout catch in the next condition below
@@ -275,13 +302,15 @@ class Lock:
                     # it is now officially our turn to take the lock, until timeout
                     break
                 pbar.total = float(holder['tags'][self.expiry_timeout_tagname]) - start
-                pbar.set_description('waiting for ' + holder['id'], False)
-                pbar.update(now - start - pbar.n)
-                #print('waiting for', holder, 'now =', now, end='\r', flush=True)
-                time.sleep(min(
+                sleep_time = min(
                     float(holder['tags'][self.expected_completion_time_tagname]),
                     max(0,float(holder['tags'][self.expiry_timeout_tagname]) - now)
-                ))
+                )
+                pbar.set_description('waiting for ' + holder['id'] + ' for ' + str(int(sleep_time)), False)
+                pbar.update(now - start - pbar.n)
+                #print('waiting for', holder, 'now =', now, end='\r', flush=True)
+                #pbar.desc = 'lock waiting for ' + holder['id'] + ' for ' + str(int(sleep_time)) + 's'
+                time.sleep(speed_time)
 
         # it is now officially our turn to take the lock, until timeout
 
@@ -344,38 +373,54 @@ class Lock:
             self.locking_tagname: self._locking_tx['id']
         })
 
+def wallet_or_address_to_wallet_address(wallet_or_address):
+    # is it a representation of a wallet?
+    if type(wallet_or_address) is ar.Wallet:
+        # yes it's a wallet
+        wallet = wallet_or_address
+    if type(wallet_or_address) is dict:
+        # yes it's data
+        wallet = ar.Wallet(jwk_data=wallet_or_address)
+    elif type(wallet_or_address) is str:
+        try:
+            # yes it's a file
+            wallet = ar.Wallet(jwk_file=wallet_or_address)
+        except:
+            # no. is it a representation of an address?
+            try:
+                assert len(ar.utils.b64dec(wallet_or_address)) == 32
+            except:
+                # no, treat it is a new file
+                wallet = ar.Wallet.generate(jwk_file=wallet_or_address)
+            else:
+                # yes, be readonly.
+                wallet = None
+                address = wallet_or_address
+    if wallet is not None:
+        address = wallet.address
+    return [wallet, address]
+
 class DataResource:
-    def __init__(self, wallet_or_address, seqs = ['data'], peers = None, bundlrnode = None, poll_time = 0.2, expected_completion_time = 1, timeout = 60, large_data = True, tags = {}):
+    def __init__(self, wallet_or_address, seqs = ['data'], peers = None, bundlrnode = None, poll_time = 0.2, expected_completion_time = 1, timeout = 60, large_data = True, tags = {}, peer_blacklist = [], large_data_wallet_or_address = None):
         bundlr = bundlrnode
         if peers is None:
-            peers = 8
+            peers = 16
         if type(peers) is int:
             num_gws = peers
             conns_per_gw = ar.Peer().max_outgoing_connections // num_gws
-            peers = [ar.Peer(url,outgoing_connections=conns_per_gw,requests_per_period=None) for url in ar.PUBLIC_GATEWAYS[:num_gws]]
-        # is it a representation of a wallet?
-        if type(wallet_or_address) is ar.Wallet:
-            # yes it's a wallet
-            wallet = wallet_or_address
-        if type(wallet_or_address) is dict:
-            # yes it's data
-            wallet = ar.Wallet(jwk_data=wallet_or_address)
-        elif type(wallet_or_address) is str:
-            try:
-                # yes it's a file
-                wallet = ar.Wallet(jwk_file=wallet_or_address)
-            except:
-                # no. is it a representation of an address?
-                try:
-                    assert len(ar.utils.b64dec(wallet_or_address)) == 32
-                except:
-                    # no, treat it is a new file
-                    wallet = ar.Wallet.generate(jwk_file=wallet_or_address)
-                else:
-                    # yes, be readonly.
-                    wallet = None
-                    address = wallet_or_address
-        if wallet is not None:
+            peers = []
+            for url in ar.PUBLIC_GATEWAYS:
+                if url not in peer_blacklist:
+                    peers.append(ar.Peer(url,outgoing_connections=conns_per_gw,requests_per_period=None))
+                    if len(peers) >= num_gws:
+                        break
+        wallet, address = wallet_or_address_to_wallet_address(wallet_or_address)
+        if large_data_wallet_or_address is not None:
+            large_data_wallet, large_data_address = wallet_or_address_to_wallet_address(large_data_wallet_or_address)
+        else:
+            large_data_wallet = wallet
+        self.large_data_wallet = large_data_wallet
+        if large_data_wallet is not None:
             if bundlr is None:
                 try:
                     import bundlr
@@ -499,7 +544,7 @@ class DataResource:
         tags_dict = tags
         full_tags = {**self.tags,**tags}
         tags = [dict(name='__seq',value='ditem')] + [dict(name=name,value=value) for name, value in full_tags.items()]
-        sender = ditem_load.Sender(seq.wallet.rsa, tags=tags)
+        sender = ditem_load.Sender(self.large_data_wallet.rsa, tags=tags)
         fields = dict(
             size = size,
             name = seq.wallet.address + ':' + name + ':' + seq.latest['tags']['clock'],
