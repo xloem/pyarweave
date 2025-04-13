@@ -18,9 +18,10 @@ ENDPOINTS = [
     TURBO, ARDRIVE_UPLOAD, ARDRIVE_PAYMENT, BUNDLR_NODE1, BUNDLR_NODE2, IRYS_MAINNET, IRYS_DEVNET
 ]
 DEFAULT_API_URL = TURBO
+DEFAULT_SUBSIDY_MAX_BYTES = TURBO_SUBSIDY_MAX_BYTES
 DEFAULT_CHAIN = 'arweave'
-import warnings
-warnings.warn('disabled bundlr fingerprint verification, update with new fingerprint from certificate transparency')
+#import warnings
+#warnings.warn('disabled bundlr fingerprint verification, update with new fingerprint from certificate transparency')
 DEFAULT_API_URL_FINGERPRINT = None#'e55fec18e416f39d0edf7807534257a188c7ec4cdd3d0d6de17eb3051a4e084c'
 
 class Node(HTTPClient):
