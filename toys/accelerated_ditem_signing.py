@@ -49,6 +49,8 @@ def AcceleratedSigner(ditem, key):
                 signing_data = deephash_digest(hash_pair).digest()
                 template_[sig_offset:sig_end] = key.sign(signing_data, AR_PADDING, AR_DIGEST)
                 return template_
+            def signature_range():
+                return [sig_offset, sig_end]
             clone = instance
         return AcceleratedSigner
     return instance()
