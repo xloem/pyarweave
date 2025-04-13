@@ -38,7 +38,7 @@ REF = {
 
 def fetch_from_registry(cu = None, process_id = None, raw = False):
     import ao, json
-    cu = cu or ao.cu(host='https://cu.ar-io.dev')
+    cu = cu or ao.cu(host='https://cu.ardrive.io')
     process_id = process_id or ao.AR_IO_TESTNET_PROCESS_ID
     tags = {
         'Action': 'Paginated-Gateways',
