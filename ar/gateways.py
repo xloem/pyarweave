@@ -15,7 +15,6 @@
 import bisect, random, sys, time
 from math import inf
 import hashlib, json, requests
-import tqdm
 
 REF = {
     'algorithm': hashlib.sha512,
@@ -122,6 +121,7 @@ def _pop(idx_or_url):
         return idx
 
 def fetch_and_update_new(cu = None, process_id = None):
+    import tqdm
     new_gws = []
     stale_gws = set()
     possible_stale_gws = []
@@ -149,6 +149,7 @@ def fetch_and_update_new(cu = None, process_id = None):
                 write()
 
 def update_best(count = 2):
+    import tqdm
     with tqdm.tqdm(range(count), unit='best gw') as pbar:
         for best in pbar:
             url = _pop(best)
@@ -170,6 +171,7 @@ def update_one():
     write()
 
 def update_all():
+    import tqdm
     time_urls = []
     bad = []
     with tqdm.tqdm(BAD + GOOD, unit='gw') as pbar:
