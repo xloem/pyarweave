@@ -1,0 +1,30 @@
+#!/usr/bin/env sh
+PFX="$(mktemp -p $HOME tmp.mail.$(date --iso=seconds).XXXXXX)" || exit 1
+BIN="$(dirname "$(realpath "$0")")"
+
+[ -r wallet.json ] || python3 "$BIN"/make_keys wallet.json
+
+GW=https://arweave.developerdao.com
+
+cat > "$PFX".eml
+
+#MIME=message/rfc822
+MIME=text/plain # more useful for quick viewing
+
+python3 "$BIN"/ditem_load.py wallet.json "$PFX".eml --tags Content-Type=$MIME > "$PFX".json &&
+RCPT=$(python3 "$BIN"/ditem_load.py wallet.json "$PFX".json --tags Content-Type=application/json | jq -r .id)
+ID=$(jq -r .id < "$PFX".json)
+NOW=$(jq -r .start_block < "$PFX".json)
+BY=$(jq -r .deadlineHeight < "$PFX".json)
+cat >> "$PFX".eml <<EOF &&
+
+$GW/$ID#$NOW#$BY
+$GW/$RCPT
+I am not affiliated with $GW .
+EOF
+
+msmtp --read-envelope-from --read-recipients -t < "$PFX".eml
+RC=$?
+rm -f "$PFX".eml
+exit $RC
+
