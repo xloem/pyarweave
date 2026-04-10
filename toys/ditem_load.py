@@ -25,7 +25,7 @@ import sys
 import threading
 from accelerated_ditem_signing import AcceleratedSigner
 import yarl39
-import ar, bundlr
+import ar, ar.utils, bundlr
 import tqdm
 
 #GATEWAY='https://baristestnet.xyz'
@@ -125,6 +125,12 @@ def main():
         type=argparse.FileType('r+b', bufsize=0),
         help='A pre-existing ditem_load json to update or fix.',
     )
+    parser.add_argument(
+        '--tags',
+        nargs='*',
+        default=[],
+        help='Following parameters are key=val tags.',
+    )
     args = parser.parse_args()
 
     if not os.path.exists(args.wallet):
@@ -134,6 +140,7 @@ def main():
         wallet = ar.Wallet(args.wallet)
     stream = args.file
     size = args.size or os.stat(stream.name).st_size
+    tags = [ar.utils.create_tag(*kv.split('=', 1),True) for kv in args.tags]
     if args.update:
         import ditem_down_stream
         num_gws = 4
@@ -319,7 +326,7 @@ def main():
             'size': size,
             #'time': int(datetime.datetime.now(datetime.UTC).timestamp())
         }
-    sender = Sender(wallet.rsa)
+    sender = Sender(wallet.rsa, tags)
     fields.update({
         'start_height': sender.min_block['height'],
         'start_block': sender.min_block['indep_hash'],
