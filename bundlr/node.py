@@ -13,7 +13,7 @@ BUNDLR_SUBSIDY_MAX_BYTES = 102400
 # note: these irys endpoints host files themselves outside arweave
 IRYS_MAINNET = 'https://uploader.irys.xyz'
 IRYS_DEVNET = 'https://devnet.irys.xyz'
-IRYS_SUBSIDY_MAX_BYTES = BUNDLR_SUBSIDY_MAX_BYTES
+IRYS_SUBSIDY_MAX_BYTES = 41074
 ENDPOINTS = [
     TURBO, ARDRIVE_UPLOAD, ARDRIVE_PAYMENT, BUNDLR_NODE1, BUNDLR_NODE2, IRYS_MAINNET, IRYS_DEVNET
 ]
