@@ -30,10 +30,13 @@ $GW/$ID#$NOW#$BY
 $GW/$RCPT
 I am not affiliated with $GW .
 EOF
-	msmtp --read-envelope-from --read-recipients -t < "$PFX".eml
-	RC=$?
+	while ! msmtp --read-envelope-from --read-recipients -t < "$PFX".eml
+	do
+		sleep 1
+	done
+	#RC=$?
 	rm -f "$PFX".eml
-	exit $RC # exit status presently discarded
+	#exit $RC # exit status presently discarded
 
 } </dev/null >$PFX.log 2>&1 &
 
