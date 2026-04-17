@@ -31,6 +31,7 @@ from Crypto.Hash import SHA256, SHA384
 # 2.7       [X]         [X]         [X]         [X]         [X]         unstarted   unstarted
 # 2.7.2     [X]         [X]         [X]         [X]         [X]         unstarted   unstarted
 # 2.8       drafted     drafted     [ ]         [ ]         drafted     unstarted   unstarted
+# 2.9       [ ]         drafted     [ ]         [ ]         unstarted   unstarted
 
 TIMESTAMP_FIELD_SIZE_LIMIT = 12
 
@@ -38,9 +39,8 @@ class Block(AutoRaw):
     '''
         github.com/arweave
         apps/arweave/include/ar.hrl
-        revision: N.2.7.4-22-g36dff9e2
         non-gossipped fields are not included in this class
-
+        revision: N.2.9.5-alpha4-323-g138acae7
 %% @doc A block (txs is a list of tx records) or a block shadow (txs is a list of
 %% transaction identifiers).
 -record(block, {
@@ -155,11 +155,15 @@ class Block(AutoRaw):
 	%% The updated estimation of the number of Winstons it costs the network to store
 	%% one gibibyte for one minute.
 	scheduled_price_per_gib_minute = 0,
-	%% The recursive hash of the network hash rates, block rewards, and mining addresses of
-	%% the latest ?REWARD_HISTORY_BLOCKS blocks.
+	%% The recursive hash of the network hash rates, block rewards, mining addresses,
+	%% and denominations.
+	%% Note that the length of the reward history has increased from
+	%% ?LEGACY_REWARD_HISTORY_BLOCKS to ?REWARD_HISTORY_BLOCKS in 2.8.
+	%% Before 2.8 every new hash was computed over the latest ?REWARD_HISTORY_BLOCKS.
+	%% After 2.8 the new hash is computed from the new history element and the previous hash.
 	reward_history_hash,
 	%% The network hash rates, block rewards, and mining addresses from the latest
-	%% ?REWARD_HISTORY_BLOCKS + ?STORE_BLOCKS_BEHIND_CURRENT blocks. Used internally, not gossiped.
+	%% ?REWARD_HISTORY_BLOCKS + ar_block:get_consensus_window_size() blocks. Used internally, not gossiped.
 	reward_history = [],
 	%% The total number of Winston emitted when the endowment was not sufficient
 	%% to compensate mining.
@@ -211,7 +215,7 @@ class Block(AutoRaw):
 	block_time_history = [], % {block_interval, vdf_interval, chunk_count}
 
 	%%
-%% The fields below were added at the fork 2.8.
+	%% The fields below were added at the fork 2.8.
 	%%
 
 	%% The packing difficulty of the replica the block was mined with.
@@ -225,6 +229,11 @@ class Block(AutoRaw):
 	%%
 	%% When packing_difficulty >= 1, both poa1 and poa2 contain the unpacked chunks.
 	%% The values of the "chunk" fields are now 8192-byte packed sub-chunks.
+	%%
+	%% If the block is associated with the new replication format (replica_format=1,)
+	%% the packing difficulty is constant and determines the number of nonces
+	%% (also, sub-chunks) in the recall range and their mining difficulty, in line with
+	%% the chosen computational difficulty of the entropy computation.
 	packing_difficulty = 0,
 	%% The SHA2-256 of the unpacked 0-padded (if less than 256 KiB) chunk.
 	%% undefined when packing_difficulty == 0, has a value otherwise.
@@ -233,6 +242,10 @@ class Block(AutoRaw):
 	%% undefined when packing_difficulty == 0 or recall_byte2 == undefined,
 	%% has a value otherwise.
 	unpacked_chunk2_hash,
+
+	%% The replica format 0 is the inefficient "packing" where every chunk is packed
+	%% independently. The replica format 1 is new the blazing fast replication format.
+	replica_format = 0,
 
 	%% Used internally, not gossiped. Convenient for validating potentially non-unique
 	%% merkle proofs assigned to the different signatures of the same solution
@@ -253,7 +266,7 @@ class Block(AutoRaw):
 	option = 1,
 	%% The path through the Merkle tree of transactions' "data_root"s.
 	%% Proofs the inclusion of the "data_root" in the corresponding "tx_root"
-%% under the particular offset.
+	%% under the particular offset.
 	tx_path = <<>>,
 	%% The path through the Merkle tree of the identifiers of the chunks
 	%% of the corresponding transaction. Proofs the inclusion of the chunk
@@ -286,7 +299,7 @@ class Block(AutoRaw):
 	%% The global sequence number of the nonce limiter step at which the block was found.
 	global_step_number = 1,
 	%% ?VDF_CHECKPOINT_COUNT_IN_STEP checkpoints from the most recent step in the nonce
-%% limiter process.
+	%% limiter process.
 	last_step_checkpoints = [],
 	%% A list of the output of each step of the nonce limiting process. Note: each step
 	%% has ?VDF_CHECKPOINT_COUNT_IN_STEP checkpoints, the last of which is that step's output.
@@ -302,7 +315,19 @@ class Block(AutoRaw):
 	%% The VDF difficulty scheduled for to be applied after the next VDF reset line.
 	next_vdf_difficulty = ?INITIAL_VDF_DIFFICULTY
 }).
-    
+
+%% @doc A VDF session.
+-record(vdf_session, {
+	step_number,
+	seed,
+	step_checkpoints_map = #{},
+	steps,
+	prev_session_key,
+	upper_bound,
+	next_upper_bound,
+	vdf_difficulty,
+	next_vdf_difficulty
+}).
     '''
     def __init__(
         self,
@@ -339,6 +364,8 @@ class Block(AutoRaw):
         # 2.8
         packing_difficulty = 0,
         unpacked_chunk_hash = None, unpacked_chunk2_hash = None,
+        # 2.9
+        replica_format = 0,
         # poa_cache, poa2_cache, receive_timestamp
     ):
         self.nonce = b64enc_if_not_str(nonce)
@@ -419,6 +446,9 @@ class Block(AutoRaw):
         self.packing_difficulty = int_if_not_none(packing_difficulty)
         self.unpacked_chunk_hash = b64enc_if_not_str(unpacked_chunk_hash)
         self.unpacked_chunk2_hash = b64enc_if_not_str(unpacked_chunk2_hash)
+
+        # 2.9
+        self.replica_format = int(replica_format) if replica_format else 0
 
     class POA(AutoRaw):
         def __init__(
@@ -941,6 +971,9 @@ class Block(AutoRaw):
             stream.write(arbinenc(self.unpacked_chunk2_hash_raw,    8))
             stream.write(arbinenc(self.poa.unpacked_chunk_raw,     24))
             stream.write(arbinenc(self.poa2.unpacked_chunk_raw,    24))
+
+        if self.height >= FORK_2_9:
+            stream.write(erlintenc(self.replica_format,             8))
 
         return stream.getvalue()
 
