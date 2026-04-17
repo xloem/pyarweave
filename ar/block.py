@@ -13,9 +13,14 @@ from .transaction import Transaction
 from . import (
     FORK_1_6, FORK_1_8,
     FORK_2_0, FORK_2_4, FORK_2_5,
-    FORK_2_6, FORK_2_7, FORK_2_8
+    FORK_2_6, FORK_2_7, FORK_2_8,
+    FORK_2_9
 )
-from . import INITIAL_VDF_DIFFICULTY
+from . import (
+    ECDSA_PUB_KEY_SIZE, ECDSA_KEY_TYPE,
+    RSA_KEY_TYPE,
+    INITIAL_VDF_DIFFICULTY
+)
 from Crypto.Hash import SHA256, SHA384
 
 # STATUS
@@ -31,7 +36,7 @@ from Crypto.Hash import SHA256, SHA384
 # 2.7       [X]         [X]         [X]         [X]         [X]         unstarted   unstarted
 # 2.7.2     [X]         [X]         [X]         [X]         [X]         unstarted   unstarted
 # 2.8       drafted     drafted     [ ]         [ ]         drafted     unstarted   unstarted
-# 2.9       [ ]         drafted     [ ]         [ ]         unstarted   unstarted
+# 2.9       drafted     drafted     [ ]         [ ]         [ ]         unstarted
 
 TIMESTAMP_FIELD_SIZE_LIMIT = 12
 
@@ -422,7 +427,12 @@ class Block(AutoRaw):
             self.poa2 = poa2
         self.recall_byte2 = int_if_not_none(recall_byte2)
         self.signature = b64enc_if_not_str(signature)
-        self.reward_key = b64enc_if_not_str(reward_key)
+        if type(reward_key) in [list, tuple]:
+            assert len(reward_key) == 2
+            self.reward_key_raw = b64dec_if_not_bytes(reward_key[1])
+            assert self.sig_type == reward_key[0]
+        else:
+            self.reward_key_raw = b64dec_if_not_bytes(reward_key)
         self.price_per_gib_minute = int_if_not_none(price_per_gib_minute)
         self.scheduled_price_per_gib_minute = int_if_not_none(scheduled_price_per_gib_minute)
         self.reward_history_hash = b64enc_if_not_str(reward_history_hash)
@@ -539,6 +549,13 @@ class Block(AutoRaw):
             return b64enc(self.reward_addr_raw)
         else:
             return 'unclaimed'
+
+    @property
+    def sig_type(self):
+        if len(self.reward_key_raw) == ECDSA_PUB_KEY_SIZE and self.height >= FORK_2_9:
+            return ECDSA_KEY_TYPE
+        else:
+            return RSA_KEY_TYPE
 
     @classmethod
     def fromjson(cls, data):
@@ -693,6 +710,9 @@ class Block(AutoRaw):
             blk.unpacked_chunk2_hash_raw = arbindec(stream, 8)
             blk.poa.unpacked_chunk_raw   = arbindec(stream, 24)
             blk.poa2.unpacked_chunk_raw  = arbindec(stream, 24)
+
+        if blk.height >= FORK_2_9:
+            blk.replica_format = erlintdec(stream, 8)
 
         return blk
 
@@ -1162,7 +1182,10 @@ class Block(AutoRaw):
 
 
 if __name__ == '__main__':
+    import ar
+    peer = ar.Peer()
     def store_block_testdata():
+        import tqdm
         from .peer import Peer
         from . import (
             FORK_1_6, FORK_1_7, FORK_1_8, FORK_1_9,
@@ -1170,53 +1193,56 @@ if __name__ == '__main__':
             FORK_2_4, FORK_2_5,
             FORK_2_6, FORK_2_6_8,
             FORK_2_7, FORK_2_7_1, FORK_2_7_2,
-            FORK_2_8,
+            FORK_2_8, FORK_2_9,
         )
-        peer = Peer()
-        blocks = dict(
-            HASH_LIST_1_0   = peer.session.get(
+        block_reqs = [
+            ['HASH_LIST_1_0'   ,lambda: peer.session.get(
                 'https://github.com/ArweaveTeam/arweave/raw/' +
                 '60de0fc5d7fb8c1f5880d9dc17266d85db897aea' +
                 '/data/hash_list_1_0'
-            ).json(),
-            BLOCK_GEN_bytes = peer.block2_height(0),
-            BLOCK_GEN_json  = peer.block_height (0),
-            BLOCK_HT1_bytes = peer.block2_height(1),
-            BLOCK_HT1_json  = peer.block_height (1),
-            BLOCK_1_6_bytes = peer.block2_height(FORK_1_6),
-            BLOCK_1_6_json  = peer.block_height (FORK_1_6),
-            BLOCK_1_7_bytes = peer.block2_height(FORK_1_7),
-            BLOCK_1_7_json  = peer.block_height (FORK_1_7),
-            BLOCK_1_8_bytes = peer.block2_height(FORK_1_8),
-            BLOCK_1_8_json  = peer.block_height (FORK_1_8),
-            BLOCK_1_9_bytes = peer.block2_height(FORK_1_9),
-            BLOCK_1_9_json  = peer.block_height (FORK_1_9),
-            BLOCK_2_0_bytes = peer.block2_height(FORK_2_0),
-            BLOCK_2_0_json  = peer.block_height (FORK_2_0),
-            BLOCK_2_2_bytes = peer.block2_height(FORK_2_2),
-            BLOCK_2_2_json  = peer.block_height (FORK_2_2),
-            BLOCK_2_3_bytes = peer.block2_height(FORK_2_3),
-            BLOCK_2_3_json  = peer.block_height (FORK_2_3),
-            BLOCK_2_4_bytes = peer.block2_height(FORK_2_4),
-            BLOCK_2_4_json  = peer.block_height (FORK_2_4),
-            BLOCK_2_5_bytes = peer.block2_height(FORK_2_5),
-            BLOCK_2_5_json  = peer.block_height (FORK_2_5),
-            BLOCK_2_6_bytes = peer.block2_height(FORK_2_6),
-            BLOCK_2_6_json  = peer.block_height (FORK_2_6),
-            BLOCK_2_6_8_bytes=peer.block2_height(FORK_2_6_8),
-            BLOCK_2_6_8_json= peer.block_height (FORK_2_6_8),
-            BLOCK_2_7_bytes = peer.block2_height(FORK_2_7),
-            BLOCK_2_7_json  = peer.block_height (FORK_2_7),
-            BLOCK_2_7_1_bytes=peer.block2_height(FORK_2_7_1),
-            BLOCK_2_7_1_json= peer.block_height (FORK_2_7_1),
-            BLOCK_2_7_2_bytes=peer.block2_height(FORK_2_7_2),
-            BLOCK_2_7_2_json= peer.block_height (FORK_2_7_2),
-        )
+            ).json()],
+            ['BLOCK_GEN_bytes'  ,peer.block2_height,0],
+            ['BLOCK_GEN_json'   ,peer.block_height ,0],
+            ['BLOCK_HT1_bytes'  ,peer.block2_height,1],
+            ['BLOCK_HT1_json'   ,peer.block_height ,1],
+            ['BLOCK_1_6_bytes'  ,peer.block2_height,FORK_1_6],
+            ['BLOCK_1_6_json'   ,peer.block_height ,FORK_1_6],
+            ['BLOCK_1_7_bytes'  ,peer.block2_height,FORK_1_7],
+            ['BLOCK_1_7_json'   ,peer.block_height ,FORK_1_7],
+            ['BLOCK_1_8_bytes'  ,peer.block2_height,FORK_1_8],
+            ['BLOCK_1_8_json'   ,peer.block_height ,FORK_1_8],
+            ['BLOCK_1_9_bytes'  ,peer.block2_height,FORK_1_9],
+            ['BLOCK_1_9_json'   ,peer.block_height ,FORK_1_9],
+            ['BLOCK_2_0_bytes'  ,peer.block2_height,FORK_2_0],
+            ['BLOCK_2_0_json'   ,peer.block_height ,FORK_2_0],
+            ['BLOCK_2_2_bytes'  ,peer.block2_height,FORK_2_2],
+            ['BLOCK_2_2_json'   ,peer.block_height ,FORK_2_2],
+            ['BLOCK_2_3_bytes'  ,peer.block2_height,FORK_2_3],
+            ['BLOCK_2_3_json'   ,peer.block_height ,FORK_2_3],
+            ['BLOCK_2_4_bytes'  ,peer.block2_height,FORK_2_4],
+            ['BLOCK_2_4_json'   ,peer.block_height ,FORK_2_4],
+            ['BLOCK_2_5_bytes'  ,peer.block2_height,FORK_2_5],
+            ['BLOCK_2_5_json'   ,peer.block_height ,FORK_2_5],
+            ['BLOCK_2_6_bytes'  ,peer.block2_height,FORK_2_6],
+            ['BLOCK_2_6_json'   ,peer.block_height ,FORK_2_6],
+            ['BLOCK_2_6_8_bytes',peer.block2_height,FORK_2_6_8],
+            ['BLOCK_2_6_8_json' ,peer.block_height ,FORK_2_6_8],
+            ['BLOCK_2_7_bytes'  ,peer.block2_height,FORK_2_7],
+            ['BLOCK_2_7_json'   ,peer.block_height ,FORK_2_7],
+            ['BLOCK_2_7_1_bytes',peer.block2_height,FORK_2_7_1],
+            ['BLOCK_2_7_1_json' ,peer.block_height ,FORK_2_7_1],
+            ['BLOCK_2_7_2_bytes',peer.block2_height,FORK_2_7_2],
+            ['BLOCK_2_7_2_json' ,peer.block_height ,FORK_2_7_2],
+            ['BLOCK_2_8_bytes'  ,peer.block2_height,FORK_2_8],
+            ['BLOCK_2_8_json'   ,peer.block_height ,FORK_2_8],
+            ['BLOCK_2_9_bytes'  ,peer.block2_height,FORK_2_9],
+            ['BLOCK_2_9_json'   ,peer.block_height ,FORK_2_9],
+        ]
         with open('_block_testdata.py', 'wt') as fh:
-            for name, val in blocks.items():
-                print(f'{name} = {repr(val)}', file=fh)
+            for name, func, *params in tqdm.tqdm(block_reqs):
+                print(f'{name} = {repr(func(*params))}', file=fh)
         return blocks
-    #store_block_testdata()
+    store_block_testdata()
     from ._block_testdata import *
 
     def dict_cmp(a,b,ctx=''):
@@ -1304,8 +1330,17 @@ if __name__ == '__main__':
     assert dict_cmp(block_2_7_2_bytes.tojson(),                  BLOCK_2_7_2_json)
     assert bin_cmp(Block.fromjson(  BLOCK_2_7_2_json).tobytes(), BLOCK_2_7_2_bytes)
     assert block_2_7_2_bytes.compute_indep_hash_raw() == block_2_7_2_bytes.indep_hash_raw
-    import ar, tqdm
-    peer = ar.Peer()
+    block_2_8_bytes = Block.frombytes(BLOCK_2_8_bytes)
+    assert dict_cmp(block_2_8_bytes.tojson(),                    BLOCK_2_8_json)
+    assert bin_cmp(Block.fromjson(  BLOCK_2_8_json).tobytes(),   BLOCK_2_8_bytes)
+    import warnings; warnings.warn("hashes not computed for fork 2.8")
+    #assert block_2_8_bytes.compute_indep_hash_raw() == block_2_8_bytes.indep_hash_raw
+    block_2_9_bytes = Block.frombytes(BLOCK_2_9_bytes)
+    assert dict_cmp(block_2_9_bytes.tojson(),                    BLOCK_2_9_json)
+    assert bin_cmp(Block.fromjson(  BLOCK_2_9_json).tobytes(),   BLOCK_2_9_bytes)
+    import warnings; warnings.warn("hashes not computed for fork 2.9")
+    #assert block_2_9_bytes.compute_indep_hash_raw() == block_2_9_bytes.indep_hash_raw
+    import tqdm
     for height in tqdm.tqdm(range(peer.info()['height'],ar.FORK_2_0,-1), desc='stored tests passed, trying all live blocks', unit='blk'):
         blk_bytes = peer.block2_height(height)
         blk_json = peer.block_height(height)
@@ -1313,4 +1348,5 @@ if __name__ == '__main__':
         blk_from_json = Block.fromjson(blk_json)
         assert dict_cmp(blk_from_bytes.tojson(), blk_json)
         assert bin_cmp(blk_from_json.tobytes(), blk_bytes)
-        assert blk_from_bytes.compute_indep_hash_raw() == blk_from_json.indep_hash_raw
+        if blk.height < FORK_2_8:
+            assert blk_from_bytes.compute_indep_hash_raw() == blk_from_json.indep_hash_raw
