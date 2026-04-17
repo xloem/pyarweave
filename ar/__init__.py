@@ -36,7 +36,8 @@ FORK_2_6_8 = 1189560 # Targeting 2023-05-30 16:00 UTC
 FORK_2_7   = 1275480 # Targeting 2023-10-04 14:00 UTC
 FORK_2_7_1 = 1316410 # Targeting 2023-12-05 14:00 UTC
 FORK_2_7_2 = 1391330 # Targeting 2024-03-26 14:00 UTC
-FORK_2_8   = float('inf')
+FORK_2_8   = 1547120 # Targeting 2024-11-13 14:00 UTC
+FORK_2_9   = 1602350.# Targeting 2025-02-03 14:00 UTC
 
 # todo use these
 HASH_ALG = 'sha256'
