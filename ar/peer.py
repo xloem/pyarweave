@@ -243,6 +243,7 @@ class HTTPClient:
             except requests.exceptions.RequestException as exc:
                 text = '' if response is None else response.text
                 status_code = 0 if response is None else response.status_code
+                logger.info(f'exception of type {type(exc)} args={repr(exc.args)}')
                 if status_code == 429 or status_code == 522: # 522 means server behind cloudfront timed out, these have resolved later
                     # too many requests
                     self._ratelimit_epilogue(False)
