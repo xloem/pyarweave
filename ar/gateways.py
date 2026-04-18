@@ -32,13 +32,17 @@ REF = {
         'payload': json.dumps({'operationName':None,'query':'query{transactions(sort:HEIGHT_DESC,first:1){edges{node{block{id height}}}}}','variables':{}}),
         'size': len('{"data":{"transactions":{"edges":[{"node":{"block":null}}]}}}\n'),
         'hexdigest': hashlib.sha512('{"data":{"transactions":{"edges":[{"node":{"block":null}}]}}}\n'.encode()).hexdigest(),
+    }, {
+        'name': 'block/current',
+        'path': 'block/current',
+        'size': 0,
     }]
 }
 
 def fetch_from_registry(cu = None, process_id = None, raw = False):
     import ao, json
     cu = cu or ao.cu(host='https://cu.ardrive.io')
-    process_id = process_id or ao.AR_IO_TESTNET_PROCESS_ID
+    process_id = process_id or ao.AR_IO_MAINNET_PROCESS_ID
     tags = {
         'Action': 'Paginated-Gateways',
         'Data-Protocol': 'ao',
@@ -77,23 +81,28 @@ def _make_gw_stat(url):
     start = time.time()
     for request in REF['requests']:
         content = b''
-        if request['payload'] is None:
-            response = requests.get(url + '/' + request['path'], headers=request.get('headers'), timeout=15, stream=True)
+        if request.get('payload') is None:
+            response = requests.get(url + '/' + request['path'], headers=request.get('headers'), timeout=30, stream=True)
         else:
             response = requests.post(url + '/' + request['path'], data = request['payload'], headers=request.get('headers'), timeout=15, stream=True)
-        with response as network_stream:
-            content = network_stream.raw.read(request['size'])
+        with response:
+          for chunk in response.iter_content(request['size']):
+            content += chunk
+            if len(content) >= request['size']:
+                break
         duration = time.time() - start
         if len(content) < request['size']:
-            raise ValueError('Short content')
-        if REF['algorithm'](content).hexdigest() != request['hexdigest']:
-            raise ValueError('Incorrect content')
+            raise ValueError('Short content', request['name'])
+        if request.get('hexdigest') is not None and REF['algorithm'](content[:request['size']]).hexdigest() != request['hexdigest']:
+            raise ValueError('Incorrect content', request['name'], content)
     return duration
 
 def _add(gw):
     try:
         time = _make_gw_stat(gw)
     except (ValueError, OSError) as exc:
+        import logging
+        logging.exception(exc)
         BAD.append(gw)
         return len(GOOD) + len(BAD) - 1
     else:
@@ -192,7 +201,8 @@ def update_all():
         pbar.set_description(str(len(GOOD)) + ' accessible gateways')
 
 def write():
-    with open(__file__,'r+t') as fh:
+    from ar.utils import FileLock
+    with open(__file__,'r+t') as fh, FileLock(fh):
         content = fh.read()
         start = content.rfind('TIMES = ')
         end = content.find('\n', content.find('BAD = ', start))

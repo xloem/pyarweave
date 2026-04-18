@@ -116,3 +116,14 @@ def ar_to_winston(ar_amount: str) -> str:
 
 def concat_buffers(buffers):
     return b''.join(buffers)
+
+class FileLock:
+    def __init__(self, file):
+        import mailbox
+        self.file = file
+        self._lock = mailbox._lock_file
+        self._unlock = mailbox._unlock_file
+    def __enter__(self):
+        self._lock(self.file)
+    def __exit__(self, *params):
+        self._unlock(self.file)
