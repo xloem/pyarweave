@@ -718,6 +718,14 @@ class Block(AutoRaw):
 
     def tojson(self):
         json = {}
+        if self.height >= FORK_2_9:
+            json['replica_format'] = self.replica_format
+        if self.height >= FORK_2_8:
+            json['packing_difficulty'] = self.packing_difficulty
+            if self.packing_difficulty >= 1:
+                json['unpacked_chunk_hash'] = self.unpacked_chunk_hash
+                if self.recall_byte3 is not None:
+                    json['unpacked_chunk2_hash'] = self.unpacked_chunk2_hash
         if self.height >= FORK_2_7:
             if self.chunk2_hash:
                 json.update({
@@ -1195,12 +1203,12 @@ if __name__ == '__main__':
             FORK_2_7, FORK_2_7_1, FORK_2_7_2,
             FORK_2_8, FORK_2_9,
         )
+        from curl_cffi import requests
         block_reqs = [
-            ['HASH_LIST_1_0'   ,lambda: peer.session.get(
-                'https://github.com/ArweaveTeam/arweave/raw/' +
-                '60de0fc5d7fb8c1f5880d9dc17266d85db897aea' +
-                '/data/hash_list_1_0'
-            ).json()],
+            ['HASH_LIST_1_0'    ,lambda url: requests.get(url).json(),
+                'https://raw.githubusercontent.com/ArweaveTeam/arweave/'+
+                '60de0fc5d7fb8c1f5880d9dc17266d85db897aea'+
+                '/data/hash_list_1_0'],
             ['BLOCK_GEN_bytes'  ,peer.block2_height,0],
             ['BLOCK_GEN_json'   ,peer.block_height ,0],
             ['BLOCK_HT1_bytes'  ,peer.block2_height,1],
@@ -1240,9 +1248,8 @@ if __name__ == '__main__':
         ]
         with open('_block_testdata.py', 'wt') as fh:
             for name, func, *params in tqdm.tqdm(block_reqs):
-                print(f'{name} = {repr(func(*params))}', file=fh)
-        return blocks
-    store_block_testdata()
+                print(f'{name} = {repr(func(*params)).strip()}', file=fh)
+    #store_block_testdata()
     from ._block_testdata import *
 
     def dict_cmp(a,b,ctx=''):
