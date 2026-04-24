@@ -35,8 +35,8 @@ from Crypto.Hash import SHA256, SHA384
 # 2.6       [X]         [X]         [X]         [X]         [X]         unstarted   unstarted
 # 2.7       [X]         [X]         [X]         [X]         [X]         unstarted   unstarted
 # 2.7.2     [X]         [X]         [X]         [X]         [X]         unstarted   unstarted
-# 2.8       drafted     drafted     [ ]         [ ]         drafted     unstarted   unstarted
-# 2.9       drafted     drafted     [ ]         [ ]         [ ]         unstarted
+# 2.8       drafted     drafted     drafted     drafted     drafted     unstarted   unstarted
+# 2.9       drafted     drafted     drafted     drafted     drafted     unstarted   unstarted
 
 TIMESTAMP_FIELD_SIZE_LIMIT = 12
 
