@@ -724,7 +724,7 @@ class Block(AutoRaw):
             json['packing_difficulty'] = self.packing_difficulty
             if self.packing_difficulty >= 1:
                 json['unpacked_chunk_hash'] = self.unpacked_chunk_hash
-                if self.recall_byte3 is not None:
+                if self.recall_byte2 is not None:
                     json['unpacked_chunk2_hash'] = self.unpacked_chunk2_hash
         if self.height >= FORK_2_7:
             if self.chunk2_hash:
@@ -1067,7 +1067,8 @@ class Block(AutoRaw):
                 arbinenc(tag, 16) for tag in self.tags
             ]),
             erlintenc(len(self.txs), 16) + b''.join([
-                arbinenc(b64dec(tx), 8) for tx in self.txs[::-1]
+                arbinenc(b64dec(tx.id if type(tx) is Transaction
+                                else tx), 8) for tx in self.txs[::-1]
             ]),
 			arintenc(self.reward, 8),
 			arintenc(self.recall_byte, 16),
@@ -1326,11 +1327,18 @@ if __name__ == '__main__':
         blk_json = peer.block_height(height)
         blk_from_bytes = Block.frombytes(blk_bytes)
         blk_from_json = Block.fromjson(blk_json)
-        assert bin_cmp(blk_from_bytes.tobytes(), blk_bytes)
-        assert bin_cmp(blk_from_json.tobytes(), blk_bytes)
-        assert dict_cmp(blk_from_bytes.tojson(), blk_json)
-        assert dict_cmp(blk_from_json.tojson(), blk_json)
-        assert blk_from_bytes.compute_indep_hash_raw() == blk_from_bytes.indep_hash_raw
-        assert blk_from_bytes.compute_indep_hash_raw() == blk_from_json.indep_hash_raw
-        assert blk_from_json.compute_indep_hash_raw() == blk_from_bytes.indep_hash_raw
-        assert blk_from_json.compute_indep_hash_raw() == blk_from_json.indep_hash_raw
+        try:
+            assert bin_cmp(blk_from_bytes.tobytes(), blk_bytes)
+            assert bin_cmp(blk_from_json.tobytes(), blk_bytes)
+            assert dict_cmp(blk_from_bytes.tojson(), blk_json)
+            assert dict_cmp(blk_from_json.tojson(), blk_json)
+            assert blk_from_bytes.compute_indep_hash_raw() == blk_from_bytes.indep_hash_raw
+            assert blk_from_bytes.compute_indep_hash_raw() == blk_from_json.indep_hash_raw
+            assert blk_from_json.compute_indep_hash_raw() == blk_from_bytes.indep_hash_raw
+            assert blk_from_json.compute_indep_hash_raw() == blk_from_json.indep_hash_raw
+        except:
+            with open('_block_testdata2.py','at') as fh:
+                print(f'BLOCK_{blk_from_bytes.height}_bytes = {repr(blk_bytes)}', file=fh)
+                print(f'BLOCK_{blk_from_json.height}_json = {repr(blk_json)}', file=fh)
+            raise
+
