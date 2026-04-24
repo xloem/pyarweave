@@ -1192,6 +1192,7 @@ class Block(AutoRaw):
 
 
 if __name__ == '__main__':
+    import ar
     def store_block_testdata():
         import tqdm
         from .peer import Peer
@@ -1286,74 +1287,50 @@ if __name__ == '__main__':
                     return False
         else:
             return True
-    assert dict_cmp(Block.frombytes(BLOCK_GEN_bytes).tojson(),   BLOCK_GEN_json)
-    assert bin_cmp(Block.fromjson(  BLOCK_GEN_json).tobytes(),   BLOCK_GEN_bytes)
-    assert dict_cmp(Block.frombytes(BLOCK_HT1_bytes).tojson(),   BLOCK_HT1_json)
-    assert bin_cmp(Block.fromjson(  BLOCK_HT1_json).tobytes(),   BLOCK_HT1_bytes)
-    assert dict_cmp(Block.frombytes(BLOCK_1_6_bytes).tojson(),   BLOCK_1_6_json)
-    assert bin_cmp(Block.fromjson(  BLOCK_1_6_json).tobytes(),   BLOCK_1_6_bytes)
-    assert dict_cmp(Block.frombytes(BLOCK_1_7_bytes).tojson(),   BLOCK_1_7_json)
-    assert bin_cmp(Block.fromjson(  BLOCK_1_7_json).tobytes(),   BLOCK_1_7_bytes)
-    assert dict_cmp(Block.frombytes(BLOCK_1_8_bytes).tojson(),   BLOCK_1_8_json)
-    assert bin_cmp(Block.fromjson(  BLOCK_1_8_json).tobytes(),   BLOCK_1_8_bytes)
-    assert dict_cmp(Block.frombytes(BLOCK_1_9_bytes).tojson(),   BLOCK_1_9_json)
-    assert bin_cmp(Block.fromjson(  BLOCK_1_9_json).tobytes(),   BLOCK_1_9_bytes)
-    block_2_0_bytes = Block.frombytes(BLOCK_2_0_bytes)
-    assert dict_cmp(block_2_0_bytes.tojson(),                    BLOCK_2_0_json)
-    assert bin_cmp(Block.fromjson(  BLOCK_2_0_json).tobytes(),   BLOCK_2_0_bytes)
-    assert block_2_0_bytes.compute_indep_hash_raw() == block_2_0_bytes.indep_hash_raw
-    block_2_2_bytes = Block.frombytes(BLOCK_2_2_bytes)
-    assert dict_cmp(block_2_2_bytes.tojson(),                    BLOCK_2_2_json)
-    assert bin_cmp(Block.fromjson(  BLOCK_2_2_json).tobytes(),   BLOCK_2_2_bytes)
-    assert block_2_2_bytes.compute_indep_hash_raw() == block_2_2_bytes.indep_hash_raw
-    block_2_3_bytes = Block.frombytes(BLOCK_2_3_bytes)
-    assert dict_cmp(block_2_3_bytes.tojson(),                    BLOCK_2_3_json)
-    assert bin_cmp(Block.fromjson(  BLOCK_2_3_json).tobytes(),   BLOCK_2_3_bytes)
-    assert block_2_3_bytes.compute_indep_hash_raw() == block_2_3_bytes.indep_hash_raw
-    block_2_4_bytes = Block.frombytes(BLOCK_2_4_bytes)
-    assert dict_cmp(block_2_4_bytes.tojson(),                    BLOCK_2_4_json)
-    assert bin_cmp(Block.fromjson(  BLOCK_2_4_json).tobytes(),   BLOCK_2_4_bytes)
-    assert block_2_4_bytes.compute_indep_hash_raw() == block_2_4_bytes.indep_hash_raw
-    block_2_5_bytes = Block.frombytes(BLOCK_2_5_bytes)
-    assert dict_cmp(block_2_5_bytes.tojson(),                    BLOCK_2_5_json)
-    assert bin_cmp(Block.fromjson(  BLOCK_2_5_json).tobytes(),   BLOCK_2_5_bytes)
-    assert block_2_5_bytes.compute_indep_hash_raw() == block_2_5_bytes.indep_hash_raw
-    block_2_6_bytes = Block.frombytes(BLOCK_2_6_bytes)
-    assert dict_cmp(block_2_6_bytes.tojson(),                    BLOCK_2_6_json)
-    assert bin_cmp(Block.fromjson(  BLOCK_2_6_json).tobytes(),   BLOCK_2_6_bytes)
-    assert block_2_6_bytes.compute_indep_hash_raw() == block_2_6_bytes.indep_hash_raw
-    block_2_6_8_bytes = Block.frombytes(BLOCK_2_6_8_bytes)
-    assert dict_cmp(block_2_6_8_bytes.tojson(),                  BLOCK_2_6_8_json)
-    assert bin_cmp(Block.fromjson(  BLOCK_2_6_8_json).tobytes(), BLOCK_2_6_8_bytes)
-    assert block_2_6_8_bytes.compute_indep_hash_raw() == block_2_6_8_bytes.indep_hash_raw
-    block_2_7_bytes = Block.frombytes(BLOCK_2_7_bytes)
-    assert dict_cmp(block_2_7_bytes.tojson(),                    BLOCK_2_7_json)
-    assert bin_cmp(Block.fromjson(  BLOCK_2_7_json).tobytes(),   BLOCK_2_7_bytes)
-    assert block_2_7_bytes.compute_indep_hash_raw() == block_2_7_bytes.indep_hash_raw
-    block_2_7_1_bytes = Block.frombytes(BLOCK_2_7_1_bytes)
-    assert dict_cmp(block_2_7_1_bytes.tojson(),                  BLOCK_2_7_1_json)
-    assert bin_cmp(Block.fromjson(  BLOCK_2_7_1_json).tobytes(), BLOCK_2_7_1_bytes)
-    assert block_2_7_1_bytes.compute_indep_hash_raw() == block_2_7_1_bytes.indep_hash_raw
-    block_2_7_2_bytes = Block.frombytes(BLOCK_2_7_2_bytes)
-    assert dict_cmp(block_2_7_2_bytes.tojson(),                  BLOCK_2_7_2_json)
-    assert bin_cmp(Block.fromjson(  BLOCK_2_7_2_json).tobytes(), BLOCK_2_7_2_bytes)
-    assert block_2_7_2_bytes.compute_indep_hash_raw() == block_2_7_2_bytes.indep_hash_raw
-    block_2_8_bytes = Block.frombytes(BLOCK_2_8_bytes)
-    assert dict_cmp(block_2_8_bytes.tojson(),                    BLOCK_2_8_json)
-    assert bin_cmp(Block.fromjson(  BLOCK_2_8_json).tobytes(),   BLOCK_2_8_bytes)
-    assert block_2_8_bytes.compute_indep_hash_raw() == block_2_8_bytes.indep_hash_raw
-    block_2_9_bytes = Block.frombytes(BLOCK_2_9_bytes)
-    assert dict_cmp(block_2_9_bytes.tojson(),                    BLOCK_2_9_json)
-    assert bin_cmp(Block.fromjson(  BLOCK_2_9_json).tobytes(),   BLOCK_2_9_bytes)
-    assert block_2_9_bytes.compute_indep_hash_raw() == block_2_9_bytes.indep_hash_raw
+    import warnings; warnings.warn("blocks prior to 2.0 are not yet hash checked")
+    for blk_bytes, blk_json in [
+            [BLOCK_GEN_bytes, BLOCK_GEN_json],
+            [BLOCK_HT1_bytes, BLOCK_HT1_json],
+            [BLOCK_1_6_bytes, BLOCK_1_6_json],
+            [BLOCK_1_7_bytes, BLOCK_1_7_json],
+            [BLOCK_1_8_bytes, BLOCK_1_8_json],
+            [BLOCK_1_9_bytes, BLOCK_1_9_json],
+            [BLOCK_2_0_bytes, BLOCK_2_0_json],
+            [BLOCK_2_2_bytes, BLOCK_2_2_json],
+            [BLOCK_2_3_bytes, BLOCK_2_3_json],
+            [BLOCK_2_4_bytes, BLOCK_2_4_json],
+            [BLOCK_2_5_bytes, BLOCK_2_5_json],
+            [BLOCK_2_6_bytes, BLOCK_2_6_json],
+            [BLOCK_2_6_8_bytes, BLOCK_2_6_8_json],
+            [BLOCK_2_7_bytes, BLOCK_2_7_json],
+            [BLOCK_2_7_1_bytes, BLOCK_2_7_1_json],
+            [BLOCK_2_7_2_bytes, BLOCK_2_7_2_json],
+            [BLOCK_2_8_bytes, BLOCK_2_8_json],
+            [BLOCK_2_9_bytes, BLOCK_2_9_json],
+    ]:
+        blk_from_bytes = Block.frombytes(blk_bytes)
+        blk_from_json = Block.fromjson(blk_json)
+        assert bin_cmp(blk_from_bytes.tobytes(), blk_bytes)
+        assert bin_cmp(blk_from_json.tobytes(), blk_bytes)
+        assert dict_cmp(blk_from_bytes.tojson(), blk_json)
+        assert dict_cmp(blk_from_json.tojson(), blk_json)
+        if blk_from_bytes.height >= ar.FORK_2_0:
+            assert blk_from_bytes.compute_indep_hash_raw() == blk_from_bytes.indep_hash_raw
+            assert blk_from_bytes.compute_indep_hash_raw() == blk_from_json.indep_hash_raw
+            assert blk_from_json.compute_indep_hash_raw() == blk_from_bytes.indep_hash_raw
+            assert blk_from_json.compute_indep_hash_raw() == blk_from_json.indep_hash_raw
     import tqdm
-    import ar
     peer = ar.Peer()
     for height in tqdm.tqdm(range(peer.info()['height'],ar.FORK_2_0,-1), desc='stored tests passed, trying all live blocks', unit='blk'):
         blk_bytes = peer.block2_height(height)
         blk_json = peer.block_height(height)
         blk_from_bytes = Block.frombytes(blk_bytes)
         blk_from_json = Block.fromjson(blk_json)
-        assert dict_cmp(blk_from_bytes.tojson(), blk_json)
+        assert bin_cmp(blk_from_bytes.tobytes(), blk_bytes)
         assert bin_cmp(blk_from_json.tobytes(), blk_bytes)
+        assert dict_cmp(blk_from_bytes.tojson(), blk_json)
+        assert dict_cmp(blk_from_json.tojson(), blk_json)
+        assert blk_from_bytes.compute_indep_hash_raw() == blk_from_bytes.indep_hash_raw
         assert blk_from_bytes.compute_indep_hash_raw() == blk_from_json.indep_hash_raw
+        assert blk_from_json.compute_indep_hash_raw() == blk_from_bytes.indep_hash_raw
+        assert blk_from_json.compute_indep_hash_raw() == blk_from_json.indep_hash_raw
