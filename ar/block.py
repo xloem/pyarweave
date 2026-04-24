@@ -1114,9 +1114,11 @@ class Block(AutoRaw):
         if self.height >= FORK_2_8:
             hash.update(b''.join([
 			    erlintenc(self.packing_difficulty, 8),
-                arbinenc(self.unpacked_chunk_hash, 8),
-                arbinenc(self.unpacked_chunk2_hash, 8)
+                arbinenc(self.unpacked_chunk_hash_raw, 8),
+                arbinenc(self.unpacked_chunk2_hash_raw, 8)
             ]))
+        if self.height >= FORK_2_9:
+            hash.update(erlintenc(self.replica_format, 8))
         return hash.digest()
     def _get_data_segment(self):
         ''' pre 2.6 '''
@@ -1190,8 +1192,6 @@ class Block(AutoRaw):
 
 
 if __name__ == '__main__':
-    import ar
-    peer = ar.Peer()
     def store_block_testdata():
         import tqdm
         from .peer import Peer
@@ -1204,6 +1204,7 @@ if __name__ == '__main__':
             FORK_2_8, FORK_2_9,
         )
         from curl_cffi import requests
+        peer = Peer()
         block_reqs = [
             ['HASH_LIST_1_0'    ,lambda url: requests.get(url).json(),
                 'https://raw.githubusercontent.com/ArweaveTeam/arweave/'+
@@ -1340,14 +1341,14 @@ if __name__ == '__main__':
     block_2_8_bytes = Block.frombytes(BLOCK_2_8_bytes)
     assert dict_cmp(block_2_8_bytes.tojson(),                    BLOCK_2_8_json)
     assert bin_cmp(Block.fromjson(  BLOCK_2_8_json).tobytes(),   BLOCK_2_8_bytes)
-    import warnings; warnings.warn("hashes not computed for fork 2.8")
-    #assert block_2_8_bytes.compute_indep_hash_raw() == block_2_8_bytes.indep_hash_raw
+    assert block_2_8_bytes.compute_indep_hash_raw() == block_2_8_bytes.indep_hash_raw
     block_2_9_bytes = Block.frombytes(BLOCK_2_9_bytes)
     assert dict_cmp(block_2_9_bytes.tojson(),                    BLOCK_2_9_json)
     assert bin_cmp(Block.fromjson(  BLOCK_2_9_json).tobytes(),   BLOCK_2_9_bytes)
-    import warnings; warnings.warn("hashes not computed for fork 2.9")
-    #assert block_2_9_bytes.compute_indep_hash_raw() == block_2_9_bytes.indep_hash_raw
+    assert block_2_9_bytes.compute_indep_hash_raw() == block_2_9_bytes.indep_hash_raw
     import tqdm
+    import ar
+    peer = ar.Peer()
     for height in tqdm.tqdm(range(peer.info()['height'],ar.FORK_2_0,-1), desc='stored tests passed, trying all live blocks', unit='blk'):
         blk_bytes = peer.block2_height(height)
         blk_json = peer.block_height(height)
@@ -1355,5 +1356,4 @@ if __name__ == '__main__':
         blk_from_json = Block.fromjson(blk_json)
         assert dict_cmp(blk_from_bytes.tojson(), blk_json)
         assert bin_cmp(blk_from_json.tobytes(), blk_bytes)
-        if blk.height < FORK_2_8:
-            assert blk_from_bytes.compute_indep_hash_raw() == blk_from_json.indep_hash_raw
+        assert blk_from_bytes.compute_indep_hash_raw() == blk_from_json.indep_hash_raw
