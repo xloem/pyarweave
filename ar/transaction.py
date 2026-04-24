@@ -379,3 +379,27 @@ class Transaction(object):
             'offset': str(proof.offset),
             'chunk': b64enc(chunk_data)
         }
+
+def test_partial():
+    for txbytes in TXS_2_5_bytes:
+        tx = Transaction.frombytes(txbytes)
+        tx.verify()
+
+def store_test_data():
+    import ar
+    import tqdm
+    peer = ar.Peer()
+    forkheights = [[key, val] for key, val in ar.__dict__.items() if key.startswith('FORK')]
+    with open('_transaction_testdata.py', 'w') as fh:
+        for name, height in tqdm.tqdm(forkheights):
+            name = name.replace('FORK', 'TXS')
+            blk = ar.Block.fromjson(peer.block_height(height))
+            blk = ar.Block.frombytes(peer.block2_height(height))
+            print(f'{name}_bytes = [{",".join([repr(peer.tx2(txid)) for txid in tqdm.tqdm(blk.txs,leave=False)])}]', file=fh)
+            print(f'{name}_json = [{",".join([repr(peer.tx(txid)) for txid in tqdm.tqdm(blk.txs,leave=False)])}]', file=fh)
+
+if __name__ == '__main__':
+    #store_test_data()
+    #from ._transaction_testdata import *
+    #test_partial()
+    pass
